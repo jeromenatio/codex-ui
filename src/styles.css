@@ -228,6 +228,7 @@ pre {
   color: var(--text);
   height: 36px;
   max-width: 142px;
+  font-size: 0.88rem;
 }
 
 .ghost-button,
