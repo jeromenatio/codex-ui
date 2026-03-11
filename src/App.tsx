@@ -30,24 +30,54 @@ import type { AccountInfo, BootstrapResponse, CodexConfigInfo, SessionDetail, Se
 
 const THEMES: Theme[] = [
   {
-    id: "linen",
-    label: "Linen Ledger",
-    description: "Lin clair, graphite doux et accent olive."
-  },
-  {
-    id: "slate",
-    label: "Slate Office",
-    description: "Gris bleuté, blanc cassé et accent ardoise."
-  },
-  {
     id: "paper",
     label: "Paper Console",
     description: "Ivoire, encre et accent cyan."
+  },
+  {
+    id: "glacier",
+    label: "Glacier Grid",
+    description: "Bleu froid, fond givré et séparation nette des échanges."
+  },
+  {
+    id: "moss",
+    label: "Moss Terminal",
+    description: "Sauge dense, pierre claire et contraste conversationnel marqué."
+  },
+  {
+    id: "ember",
+    label: "Ember Ledger",
+    description: "Argile chaude, accents cuivre et bulles fortement séparées."
+  },
+  {
+    id: "rose",
+    label: "Rose Signal",
+    description: "Rosé pâle, prune sèche et hiérarchie plus éditoriale."
+  },
+  {
+    id: "solar",
+    label: "Solar Draft",
+    description: "Crème lumineuse, safran franc et lecture très découpée."
+  },
+  {
+    id: "cobalt",
+    label: "Cobalt Frame",
+    description: "Bleu net, gris clair et rendu plus graphique."
+  },
+  {
+    id: "mono",
+    label: "Mono Slate",
+    description: "Quasi monochrome, graphite marqué et contraste sobre."
   }
 ];
 
 const THREAD_KEY = "codex-ui-current-thread";
 const THEME_KEY = "codex-ui-theme";
+const DEFAULT_THEME = "paper";
+
+function resolveTheme(themeId: string | null) {
+  return THEMES.some((theme) => theme.id === themeId) ? themeId! : DEFAULT_THEME;
+}
 
 async function fetchJson<T>(input: RequestInfo, init?: RequestInit) {
   const response = await fetch(input, {
@@ -128,7 +158,7 @@ function App() {
   const [isPosting, setIsPosting] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [theme, setTheme] = useState<string>(() => localStorage.getItem(THEME_KEY) ?? THEMES[0].id);
+  const [theme, setTheme] = useState<string>(DEFAULT_THEME);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isActivityOpen, setIsActivityOpen] = useState(false);
   const [expandedMessages, setExpandedMessages] = useState<Record<string, boolean>>({});
@@ -239,8 +269,19 @@ function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(THEME_KEY, theme);
-    document.documentElement.dataset.theme = theme;
+    const storedTheme = resolveTheme(localStorage.getItem(THEME_KEY));
+    setTheme(storedTheme);
+  }, []);
+
+  useEffect(() => {
+    const resolvedTheme = resolveTheme(theme);
+    if (resolvedTheme !== theme) {
+      setTheme(resolvedTheme);
+      return;
+    }
+
+    localStorage.setItem(THEME_KEY, resolvedTheme);
+    document.documentElement.dataset.theme = resolvedTheme;
   }, [theme]);
 
   useEffect(() => {
