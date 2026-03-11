@@ -29,6 +29,20 @@ npm install
 codex login
 ```
 
+### Ubuntu one-liner
+
+Pour une fresh install Ubuntu, cette commande met a jour le systeme, installe Node.js, npm et Codex CLI :
+
+```bash
+sudo apt-get update && sudo apt-get upgrade -y && sudo apt-get install -y curl ca-certificates gnupg && curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs && sudo npm install -g @openai/codex
+```
+
+Puis connecte Codex :
+
+```bash
+codex login
+```
+
 Vérifie ensuite que Codex est bien accessible :
 
 ```bash
