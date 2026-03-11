@@ -712,7 +712,13 @@ function App() {
 
           <label className="theme-switcher">
             <Palette size={16} />
-            <select value={theme} onChange={(event) => setTheme(event.target.value)}>
+            <select
+              value={theme}
+              onChange={(event) => {
+                setTheme(event.target.value);
+                event.target.blur();
+              }}
+            >
               {THEMES.map((entry) => (
                 <option key={entry.id} value={entry.id}>
                   {entry.label}
@@ -805,7 +811,7 @@ function App() {
 
         <aside className="sidebar-column">
           <div className="sidebar-sticky">
-            <section className="sidebar-panel">
+            <section className="sidebar-panel composer-panel">
               <div className="section-head section-head-compact tight">
                 <div className="panel-title">
                   <FolderKanban size={15} />
