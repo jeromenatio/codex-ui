@@ -14,6 +14,7 @@ const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "..");
 const clientDist = path.join(rootDir, "dist");
 const codexConfigPath = path.join(process.env.HOME ?? "/root", ".codex", "config.toml");
+const projectsRoot = "/projects";
 let activeWorkspaceDir = rootDir;
 
 const app = express();
@@ -25,6 +26,12 @@ const store = new SessionStore();
 const sseClients = new Set<express.Response>();
 
 type ThreadResponse = { thread: Thread };
+type FileTreeEntry = {
+  name: string;
+  path: string;
+  type: "file" | "directory";
+  extension: string | null;
+};
 
 function broadcast(event: string, data: unknown) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -40,6 +47,77 @@ function getErrorMessage(error: unknown) {
 function isMissingRolloutError(error: unknown) {
   const message = getErrorMessage(error);
   return message.includes("no rollout found") || message.includes("not materialized yet");
+}
+
+function resolveProjectsPath(input?: string | null) {
+  const target = path.resolve(projectsRoot, input?.trim() || ".");
+  if (target !== projectsRoot && !target.startsWith(`${projectsRoot}${path.sep}`)) {
+    throw new Error("Path must stay within /projects.");
+  }
+
+  return target;
+}
+
+function toProjectRelativePath(targetPath: string) {
+  const relative = path.relative(projectsRoot, targetPath);
+  return relative === "" ? "" : relative;
+}
+
+async function readDirectoryTree(input?: string | null) {
+  const absolutePath = resolveProjectsPath(input);
+  const stats = await fs.stat(absolutePath);
+  if (!stats.isDirectory()) {
+    throw new Error("Requested path is not a directory.");
+  }
+
+  const entries = await fs.readdir(absolutePath, { withFileTypes: true });
+  const mapped = entries
+    .map((entry) => {
+      const nextPath = path.join(absolutePath, entry.name);
+      return {
+        name: entry.name,
+        path: toProjectRelativePath(nextPath),
+        type: entry.isDirectory() ? ("directory" as const) : ("file" as const),
+        extension: entry.isDirectory() ? null : path.extname(entry.name).slice(1).toLowerCase() || null
+      };
+    })
+    .sort((left, right) => {
+      if (left.type !== right.type) {
+        return left.type === "directory" ? -1 : 1;
+      }
+
+      return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+    });
+
+  return {
+    path: toProjectRelativePath(absolutePath),
+    entries: mapped satisfies FileTreeEntry[]
+  };
+}
+
+async function readProjectFile(input?: string | null) {
+  const absolutePath = resolveProjectsPath(input);
+  const stats = await fs.stat(absolutePath);
+  if (!stats.isFile()) {
+    throw new Error("Requested path is not a file.");
+  }
+
+  const content = await fs.readFile(absolutePath);
+  if (content.includes(0)) {
+    return {
+      path: toProjectRelativePath(absolutePath),
+      name: path.basename(absolutePath),
+      extension: path.extname(absolutePath).slice(1).toLowerCase() || null,
+      content: "Binary file preview is not supported."
+    };
+  }
+
+  return {
+    path: toProjectRelativePath(absolutePath),
+    name: path.basename(absolutePath),
+    extension: path.extname(absolutePath).slice(1).toLowerCase() || null,
+    content: content.toString("utf8")
+  };
 }
 
 async function readCodexConfig(): Promise<CodexConfigInfo> {
@@ -462,6 +540,24 @@ app.get("/api/account", async (request, response) => {
 
 app.get("/api/config", async (_request, response) => {
   response.json({ config: await readCodexConfig() });
+});
+
+app.get("/api/files/tree", async (request, response) => {
+  try {
+    const targetPath = typeof request.query.path === "string" ? request.query.path : "";
+    response.json(await readDirectoryTree(targetPath));
+  } catch (error) {
+    response.status(400).json({ error: getErrorMessage(error) });
+  }
+});
+
+app.get("/api/files/content", async (request, response) => {
+  try {
+    const targetPath = typeof request.query.path === "string" ? request.query.path : "";
+    response.json(await readProjectFile(targetPath));
+  } catch (error) {
+    response.status(400).json({ error: getErrorMessage(error) });
+  }
 });
 
 app.post("/api/config", async (request, response) => {

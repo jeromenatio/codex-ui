@@ -4,16 +4,24 @@ import remarkGfm from "remark-gfm";
 import {
   Activity,
   Bot,
+  ChevronDown,
+  ChevronRight,
   CircleStop,
   CircleX,
   Copy,
   Expand,
+  File,
+  FileCode2,
+  FileText,
+  Files as FilesIcon,
   FolderOpen,
+  Folder,
   Minimize2,
   MessagesSquare,
   Eraser,
   FolderKanban,
   Gauge,
+  Image,
   LoaderCircle,
   MessageSquareMore,
   Palette,
@@ -75,8 +83,79 @@ const THREAD_KEY = "codex-ui-current-thread";
 const THEME_KEY = "codex-ui-theme";
 const DEFAULT_THEME = "paper";
 
+type AppPage = "chat" | "files";
+type FileTreeEntry = {
+  name: string;
+  path: string;
+  type: "file" | "directory";
+  extension: string | null;
+};
+type FileTreeResponse = {
+  path: string;
+  entries: FileTreeEntry[];
+};
+type FileContentResponse = {
+  path: string;
+  name: string;
+  content: string;
+};
+
+function pageFromPathname(pathname: string): AppPage {
+  return pathname === "/files" ? "files" : "chat";
+}
+
+function pathFromPage(page: AppPage) {
+  return page === "files" ? "/files" : "/";
+}
+
 function resolveTheme(themeId: string | null) {
   return THEMES.some((theme) => theme.id === themeId) ? themeId! : DEFAULT_THEME;
+}
+
+function parentDirectory(filePath: string) {
+  const segments = filePath.split("/").filter(Boolean);
+  if (segments.length <= 1) {
+    return "";
+  }
+
+  return segments.slice(0, -1).join("/");
+}
+
+function projectLabel(filePath: string) {
+  return filePath ? `/projects/${filePath}` : "/projects";
+}
+
+function isImageExtension(extension: string | null) {
+  return Boolean(extension && ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico"].includes(extension));
+}
+
+function isCodeExtension(extension: string | null) {
+  return Boolean(
+    extension &&
+      [
+        "ts",
+        "tsx",
+        "js",
+        "jsx",
+        "json",
+        "css",
+        "scss",
+        "html",
+        "md",
+        "mjs",
+        "cjs",
+        "yml",
+        "yaml",
+        "toml",
+        "sh",
+        "py",
+        "rb",
+        "go",
+        "rs",
+        "java",
+        "php"
+      ].includes(extension)
+  );
 }
 
 async function fetchJson<T>(input: RequestInfo, init?: RequestInit) {
@@ -148,7 +227,28 @@ hide_full_access_warning = true
 `;
 }
 
+function fileEntryIcon(entry: FileTreeEntry, isOpen: boolean) {
+  if (entry.type === "directory") {
+    return isOpen ? <FolderOpen size={15} /> : <Folder size={15} />;
+  }
+
+  if (isImageExtension(entry.extension)) {
+    return <Image size={15} />;
+  }
+
+  if (isCodeExtension(entry.extension)) {
+    return <FileCode2 size={15} />;
+  }
+
+  if (entry.extension === "md" || entry.extension === "txt") {
+    return <FileText size={15} />;
+  }
+
+  return <File size={15} />;
+}
+
 function App() {
+  const [activePage, setActivePage] = useState<AppPage>(() => pageFromPathname(window.location.pathname));
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [currentThread, setCurrentThread] = useState<SessionDetail | null>(null);
   const [message, setMessage] = useState("");
@@ -172,6 +272,15 @@ function App() {
   const [isSessionsOverlayOpen, setIsSessionsOverlayOpen] = useState(false);
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [fileTree, setFileTree] = useState<Record<string, FileTreeEntry[]>>({});
+  const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
+  const [loadingFolders, setLoadingFolders] = useState<Record<string, boolean>>({});
+  const [selectedFilePath, setSelectedFilePath] = useState("");
+  const [selectedFileContent, setSelectedFileContent] = useState("");
+  const [selectedFileName, setSelectedFileName] = useState("Select a file");
+  const [isFileTreeLoading, setIsFileTreeLoading] = useState(false);
+  const [isFileContentLoading, setIsFileContentLoading] = useState(false);
+  const [isFileContentCopied, setIsFileContentCopied] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pendingAutoScrollRef = useRef(false);
@@ -216,6 +325,90 @@ function App() {
     const data = await fetchJson<{ config: CodexConfigInfo }>("/api/config");
     setConfigDraft(data.config.content);
     setConfigPath(data.config.path);
+  }
+
+  async function loadFolderTree(folderPath: string, options?: { markOpen?: boolean }) {
+    const search = folderPath ? `?path=${encodeURIComponent(folderPath)}` : "";
+    if (!folderPath) {
+      setIsFileTreeLoading(true);
+    } else {
+      setLoadingFolders((previous) => ({ ...previous, [folderPath]: true }));
+    }
+
+    try {
+      const data = await fetchJson<FileTreeResponse>(`/api/files/tree${search}`);
+      setFileTree((previous) => ({ ...previous, [data.path]: data.entries }));
+      if (options?.markOpen) {
+        setOpenFolders((previous) => ({ ...previous, [data.path]: true }));
+      }
+      setError(null);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unable to load the file tree.");
+    } finally {
+      if (!folderPath) {
+        setIsFileTreeLoading(false);
+      } else {
+        setLoadingFolders((previous) => ({ ...previous, [folderPath]: false }));
+      }
+    }
+  }
+
+  async function loadFileContent(filePath: string) {
+    setIsFileContentLoading(true);
+    setSelectedFilePath(filePath);
+    setIsFileContentCopied(false);
+
+    try {
+      const data = await fetchJson<FileContentResponse>(`/api/files/content?path=${encodeURIComponent(filePath)}`);
+      setSelectedFileName(data.name);
+      setSelectedFileContent(data.content);
+      setError(null);
+    } catch (nextError) {
+      setSelectedFileName(filePath.split("/").pop() || "Unknown file");
+      setSelectedFileContent("");
+      setError(nextError instanceof Error ? nextError.message : "Unable to load the selected file.");
+    } finally {
+      setIsFileContentLoading(false);
+    }
+  }
+
+  function closeFolderBranch(folderPath: string) {
+    setOpenFolders((previous) =>
+      Object.fromEntries(Object.entries(previous).filter(([key]) => key !== folderPath && !key.startsWith(`${folderPath}/`)))
+    );
+  }
+
+  async function handleFolderToggle(folderPath: string) {
+    const currentlyOpen = Boolean(openFolders[folderPath]);
+    const parent = parentDirectory(folderPath);
+    const siblingEntries = fileTree[parent] ?? [];
+
+    if (currentlyOpen) {
+      closeFolderBranch(folderPath);
+      return;
+    }
+
+    const siblingFolders = siblingEntries.filter((entry) => entry.type === "directory").map((entry) => entry.path);
+    setOpenFolders((previous) => {
+      const next = { ...previous };
+      for (const siblingPath of siblingFolders) {
+        if (siblingPath !== folderPath) {
+          delete next[siblingPath];
+          for (const key of Object.keys(next)) {
+            if (key.startsWith(`${siblingPath}/`)) {
+              delete next[key];
+            }
+          }
+        }
+      }
+
+      next[folderPath] = true;
+      return next;
+    });
+
+    if (!fileTree[folderPath]) {
+      await loadFolderTree(folderPath, { markOpen: true });
+    }
   }
 
   async function loadThread(threadId: string, options?: { preserveError?: boolean }) {
@@ -283,6 +476,14 @@ function App() {
     localStorage.setItem(THEME_KEY, resolvedTheme);
     document.documentElement.dataset.theme = resolvedTheme;
   }, [theme]);
+
+  useEffect(() => {
+    if (activePage !== "files" || fileTree[""]) {
+      return;
+    }
+
+    void loadFolderTree("");
+  }, [activePage, fileTree]);
 
   useEffect(() => {
     if (!selectedThreadId) {
@@ -400,7 +601,7 @@ function App() {
       count: nextCount
     };
     pendingAutoScrollRef.current = false;
-  }, [selectedThreadId, conversationMessages.length, isLoading]);
+  }, [selectedThreadId, conversationMessages.length, isLoading, activePage]);
 
   async function handleCreateSession() {
     setIsCreating(true);
@@ -557,6 +758,22 @@ function App() {
     }
   }
 
+  async function handleCopySelectedFile() {
+    if (!selectedFilePath || !selectedFileContent) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(selectedFileContent);
+      setIsFileContentCopied(true);
+      window.setTimeout(() => {
+        setIsFileContentCopied(false);
+      }, 1200);
+    } catch {
+      setError("Unable to copy file content.");
+    }
+  }
+
   function renderMarkdown(text: string) {
     return (
       <ReactMarkdown
@@ -617,6 +834,44 @@ function App() {
     }));
   }
 
+  function renderFileTree(folderPath = "", level = 0): ReactNode {
+    const entries = fileTree[folderPath] ?? [];
+
+    return entries.map((entry) => {
+      const isDirectory = entry.type === "directory";
+      const isOpen = Boolean(openFolders[entry.path]);
+      const isSelected = !isDirectory && selectedFilePath === entry.path;
+      const isLoading = Boolean(loadingFolders[entry.path]);
+
+      return (
+        <div key={entry.path} className="file-tree-node">
+          <button
+            type="button"
+            className={`file-tree-row ${isSelected ? "active" : ""}`}
+            style={{ paddingLeft: `${12 + level * 18}px` }}
+            onClick={() => {
+              if (isDirectory) {
+                void handleFolderToggle(entry.path);
+                return;
+              }
+
+              void loadFileContent(entry.path);
+            }}
+          >
+            <span className="file-tree-caret">
+              {isDirectory ? (isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : null}
+            </span>
+            <span className="file-tree-icon">{fileEntryIcon(entry, isOpen)}</span>
+            <span className="file-tree-label">{entry.name}</span>
+            {isLoading ? <LoaderCircle size={14} className="spin" /> : null}
+          </button>
+
+          {isDirectory && isOpen ? <div className="file-tree-children">{renderFileTree(entry.path, level + 1)}</div> : null}
+        </div>
+      );
+    });
+  }
+
   async function handleOpenConfig() {
     await refreshConfig();
     setIsConfigOpen(true);
@@ -655,6 +910,17 @@ function App() {
     }
   }
 
+  function handlePageChange(page: AppPage) {
+    const nextPath = pathFromPage(page);
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({}, "", nextPath);
+    }
+    if (page === "chat" && currentThread && conversationMessages.length > 0) {
+      pendingAutoScrollRef.current = true;
+    }
+    setActivePage(page);
+  }
+
   async function handleDeleteSession(session: SessionSummary) {
     const confirmed = window.confirm(`Delete session "${deriveSessionTitle(session)}" ?`);
     if (!confirmed) {
@@ -686,6 +952,19 @@ function App() {
     }
   }
 
+  useEffect(() => {
+    const handlePopState = () => {
+      const nextPage = pageFromPathname(window.location.pathname);
+      if (nextPage === "chat" && currentThread && conversationMessages.length > 0) {
+        pendingAutoScrollRef.current = true;
+      }
+      setActivePage(nextPage);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [conversationMessages.length, currentThread]);
+
   return (
     <div className="app-shell" data-theme={theme}>
       <nav className="topbar">
@@ -700,6 +979,25 @@ function App() {
         </div>
 
         <div className="topbar-actions">
+          <div className="topbar-nav" aria-label="App pages">
+            <button
+              type="button"
+              className={`ghost-button nav-button ${activePage === "chat" ? "active" : ""}`}
+              onClick={() => handlePageChange("chat")}
+            >
+              <MessagesSquare size={16} />
+              Chat
+            </button>
+            <button
+              type="button"
+              className={`ghost-button nav-button ${activePage === "files" ? "active" : ""}`}
+              onClick={() => handlePageChange("files")}
+            >
+              <FilesIcon size={16} />
+              Files
+            </button>
+          </div>
+
           <button className="ghost-button" type="button" onClick={() => void handleOpenConfig()}>
             <Settings2 size={16} />
             Configs
@@ -734,7 +1032,8 @@ function App() {
         </div>
       </nav>
 
-      <main className="layout">
+      {activePage === "chat" ? (
+        <main className="layout">
         <section className="conversation-column">
           <div className="section-head section-head-compact tight">
             <div className="panel-title">
@@ -811,7 +1110,7 @@ function App() {
 
         <aside className="sidebar-column">
           <div className="sidebar-sticky">
-            <section className="sidebar-panel composer-panel">
+            <section className="sidebar-panel">
               <div className="section-head section-head-compact tight">
                 <div className="panel-title">
                   <FolderKanban size={15} />
@@ -852,7 +1151,7 @@ function App() {
               </div>
             </section>
 
-            <section className="sidebar-panel">
+            <section className="sidebar-panel composer-panel">
               <div className="section-head section-head-compact tight">
                 <div className="panel-title">
                   <SquarePen size={15} />
@@ -940,7 +1239,72 @@ function App() {
             {error ? <section className="error-box">{error}</section> : null}
           </div>
         </aside>
-      </main>
+        </main>
+      ) : (
+        <main className="files-layout">
+          <section className="file-viewer-column">
+            <div className="section-head section-head-compact tight">
+              <div className="panel-title">
+                <FileText size={15} />
+                <h2>Viewer</h2>
+              </div>
+              <span className="meta-tag">{projectLabel(selectedFilePath)}</span>
+            </div>
+
+            <div className="file-viewer-panel">
+              <div className="file-viewer-meta">
+                <strong>{selectedFileName}</strong>
+                <button
+                  type="button"
+                  className="ghost-button subtle"
+                  onClick={() => void handleCopySelectedFile()}
+                  disabled={!selectedFilePath || !selectedFileContent}
+                >
+                  <Copy size={15} />
+                  {isFileContentCopied ? "Copied" : "Copy"}
+                </button>
+              </div>
+
+              {isFileContentLoading ? (
+                <div className="empty-state">
+                  <LoaderCircle size={18} className="spin" />
+                  <p>Loading file...</p>
+                </div>
+              ) : selectedFilePath ? (
+                <pre className="file-viewer-content">{selectedFileContent}</pre>
+              ) : (
+                <div className="empty-state">
+                  <FilesIcon size={22} />
+                  <p>Select a file from the tree to preview it.</p>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <aside className="file-tree-column">
+            <section className="file-tree-panel">
+              <div className="section-head section-head-compact tight">
+                <div className="panel-title">
+                  <FolderKanban size={15} />
+                  <h2>Projects</h2>
+                </div>
+                <span className="meta-tag">/projects</span>
+              </div>
+
+              <div className="file-tree-list">
+                {isFileTreeLoading ? (
+                  <div className="empty-state compact-empty">
+                    <LoaderCircle size={18} className="spin" />
+                    <p>Loading file tree...</p>
+                  </div>
+                ) : (
+                  renderFileTree()
+                )}
+              </div>
+            </section>
+          </aside>
+        </main>
+      )}
 
       {isCreateModalOpen ? (
         <div className="modal-backdrop" onClick={() => setIsCreateModalOpen(false)}>
