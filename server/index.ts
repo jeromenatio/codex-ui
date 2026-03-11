@@ -1,18 +1,23 @@
 import path from "node:path";
 import process from "node:process";
+import { execFile } from "node:child_process";
+import { promises as fs } from "node:fs";
+import { promisify } from "node:util";
 import express from "express";
 import { fileURLToPath } from "node:url";
 import { CodexAppClient } from "./codex-app-client.js";
 import { SessionStore, mapItem, type Thread, type ThreadItem } from "./session-store.js";
-import type { SessionDetail } from "./types.js";
+import type { AccountInfo, CodexConfigInfo, SessionDetail } from "./types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "..");
 const clientDist = path.join(rootDir, "dist");
+const codexConfigPath = path.join(process.env.HOME ?? "/root", ".codex", "config.toml");
 
 const app = express();
 app.use(express.json());
+const execFileAsync = promisify(execFile);
 
 const codex = new CodexAppClient({ cwd: rootDir });
 const store = new SessionStore();
@@ -25,6 +30,28 @@ function broadcast(event: string, data: unknown) {
   for (const client of sseClients) {
     client.write(payload);
   }
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error ?? "");
+}
+
+function isMissingRolloutError(error: unknown) {
+  const message = getErrorMessage(error);
+  return message.includes("no rollout found") || message.includes("not materialized yet");
+}
+
+async function readCodexConfig(): Promise<CodexConfigInfo> {
+  const content = await fs.readFile(codexConfigPath, "utf8").catch(() => "");
+  return {
+    path: codexConfigPath,
+    content
+  };
+}
+
+async function restartCodex() {
+  await codex.restart();
+  await listThreads();
 }
 
 async function listThreads() {
@@ -50,11 +77,33 @@ async function loadThread(threadId: string) {
     try {
       response = await codex.request<ThreadResponse>("thread/read", { threadId, includeTurns: true });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      if (!message.includes("not materialized yet")) {
+      if (!isMissingRolloutError(error)) {
         throw error;
       }
 
+      try {
+        response = await codex.request<ThreadResponse>("thread/resume", {
+          threadId,
+          cwd: rootDir,
+          approvalPolicy: "never",
+          sandbox: "danger-full-access",
+          persistExtendedHistory: true
+        });
+      } catch (resumeError) {
+        if (!isMissingRolloutError(resumeError)) {
+          throw resumeError;
+        }
+
+        const existing = detailFromStore(threadId);
+        if (existing) {
+          return existing;
+        }
+
+        throw resumeError;
+      }
+    }
+  } else {
+    try {
       response = await codex.request<ThreadResponse>("thread/resume", {
         threadId,
         cwd: rootDir,
@@ -62,15 +111,18 @@ async function loadThread(threadId: string) {
         sandbox: "danger-full-access",
         persistExtendedHistory: true
       });
+    } catch (error) {
+      if (!isMissingRolloutError(error)) {
+        throw error;
+      }
+
+      const existing = detailFromStore(threadId);
+      if (existing) {
+        return existing;
+      }
+
+      throw error;
     }
-  } else {
-    response = await codex.request<ThreadResponse>("thread/resume", {
-      threadId,
-      cwd: rootDir,
-      approvalPolicy: "never",
-      sandbox: "danger-full-access",
-      persistExtendedHistory: true
-    });
   }
 
   return store.setThread(response.thread as Thread);
@@ -95,6 +147,85 @@ async function createThread(name?: string | null) {
 
 function detailFromStore(threadId: string): SessionDetail | null {
   return store.getDetail(threadId);
+}
+
+async function getAccountInfo(currentThreadId?: string | null): Promise<AccountInfo> {
+  const fallbackStatus = await execFileAsync("codex", ["login", "status"], {
+    cwd: rootDir,
+    env: process.env
+  })
+    .then(({ stdout }) => stdout.trim() || "Login status unavailable")
+    .catch(() => "Login status unavailable");
+
+  const accountResponse = await codex
+    .request<{
+      account?: { type?: string; email?: string; planType?: string } | null;
+      requiresOpenaiAuth?: boolean;
+    }>("account/read", { refreshAuth: false })
+    .catch(() => ({ account: null, requiresOpenaiAuth: false }));
+
+  const rateLimitsResponse = await codex
+    .request<{
+      rateLimits?: {
+        primary?: { usedPercent?: number; resetsAt?: number | null; windowDurationMins?: number | null } | null;
+        secondary?: { usedPercent?: number; resetsAt?: number | null; windowDurationMins?: number | null } | null;
+      } | null;
+      rateLimitsByLimitId?: Record<
+        string,
+        {
+          primary?: { usedPercent?: number; resetsAt?: number | null; windowDurationMins?: number | null } | null;
+          secondary?: { usedPercent?: number; resetsAt?: number | null; windowDurationMins?: number | null } | null;
+        }
+      > | null;
+    }>("account/rateLimits/read", {})
+    .catch(() => ({ rateLimits: null, rateLimitsByLimitId: null }));
+
+  const snapshots = [
+    ...(rateLimitsResponse.rateLimits ? [rateLimitsResponse.rateLimits] : []),
+    ...Object.values(rateLimitsResponse.rateLimitsByLimitId ?? {})
+  ];
+
+  const windows = snapshots.flatMap((snapshot) => [snapshot.primary, snapshot.secondary]).filter(Boolean) as Array<{
+    usedPercent?: number;
+    resetsAt?: number | null;
+    windowDurationMins?: number | null;
+  }>;
+
+  const findWindow = (targetMinutes: number) =>
+    windows.find((entry) => entry.windowDurationMins === targetMinutes) ??
+    windows.find((entry) => Math.abs((entry.windowDurationMins ?? 0) - targetMinutes) <= 1) ??
+    null;
+
+  const toRemainingLabel = (usedPercent?: number) =>
+    typeof usedPercent === "number" ? `${Math.max(0, 100 - usedPercent)}% left` : "Unavailable";
+
+  const toResetLabel = (timestamp?: number | null) => {
+    if (!timestamp) {
+      return "Unavailable";
+    }
+
+    const millis = timestamp > 1_000_000_000_000 ? timestamp : timestamp * 1000;
+    return new Intl.DateTimeFormat("fr-FR", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit"
+    }).format(millis);
+  };
+
+  const window5h = findWindow(300);
+  const window7d = findWindow(10080);
+  const account = accountResponse.account;
+
+  return {
+    planLabel: account?.planType?.toUpperCase() ?? "Unknown plan",
+    accountLabel: account?.email ?? fallbackStatus,
+    remaining5hLabel: toRemainingLabel(window5h?.usedPercent),
+    reset5hLabel: toResetLabel(window5h?.resetsAt),
+    remaining7dLabel: toRemainingLabel(window7d?.usedPercent),
+    reset7dLabel: toResetLabel(window7d?.resetsAt),
+    updatedAt: Date.now()
+  };
 }
 
 codex.on("notification", async (message: { method: string; params?: Record<string, unknown> }) => {
@@ -285,13 +416,60 @@ app.get("/api/bootstrap", async (request, response) => {
   });
 });
 
+app.get("/api/account", async (request, response) => {
+  await listThreads();
+  const threadId = typeof request.query.threadId === "string" ? request.query.threadId : null;
+  response.json({ account: await getAccountInfo(threadId) });
+});
+
+app.get("/api/config", async (_request, response) => {
+  response.json({ config: await readCodexConfig() });
+});
+
+app.post("/api/config", async (request, response) => {
+  const content = typeof request.body?.content === "string" ? request.body.content : null;
+  const restart = Boolean(request.body?.restart);
+
+  if (content === null) {
+    response.status(400).json({ error: "Config content is required." });
+    return;
+  }
+
+  await fs.writeFile(codexConfigPath, content, "utf8");
+
+  if (restart) {
+    await restartCodex();
+    broadcast("sessions", store.getSummaries());
+  }
+
+  response.json({
+    ok: true,
+    restarted: restart,
+    config: await readCodexConfig()
+  });
+});
+
 app.get("/api/sessions", async (_request, response) => {
   const sessions = await listThreads();
   response.json({ sessions });
 });
 
 app.get("/api/sessions/:threadId", async (request, response) => {
-  const detail = await loadThread(request.params.threadId);
+  const threadId = request.params.threadId;
+  const detail =
+    (await loadThread(threadId).catch((error) => {
+      if (isMissingRolloutError(error)) {
+        return detailFromStore(threadId);
+      }
+
+      throw error;
+    })) ?? null;
+
+  if (!detail) {
+    response.status(404).json({ error: "Session not found." });
+    return;
+  }
+
   response.json({ thread: detail });
 });
 
@@ -347,7 +525,19 @@ app.post("/api/sessions/:threadId/messages", async (request, response) => {
 
 app.post("/api/sessions/:threadId/stop", async (request, response) => {
   const threadId = request.params.threadId;
-  const detail = await loadThread(threadId);
+  const detail =
+    (await loadThread(threadId).catch((error) => {
+      if (isMissingRolloutError(error)) {
+        return detailFromStore(threadId);
+      }
+
+      throw error;
+    })) ?? null;
+
+  if (!detail) {
+    response.status(404).json({ error: "Session not found." });
+    return;
+  }
 
   if (!detail.currentTurnId) {
     response.status(409).json({ error: "No running turn for this session." });
@@ -375,11 +565,32 @@ app.post("/api/sessions/:threadId/stop", async (request, response) => {
 
 app.post("/api/sessions/:threadId/clear", async (request, response) => {
   const threadId = request.params.threadId;
-  const detail = await loadThread(threadId);
+  const detail =
+    (await loadThread(threadId).catch((error) => {
+      if (isMissingRolloutError(error)) {
+        return detailFromStore(threadId);
+      }
+
+      throw error;
+    })) ?? null;
+
+  if (!detail) {
+    response.status(404).json({ error: "Session not found." });
+    return;
+  }
+
   const turns = Math.ceil(detail.messages.length / 2);
 
-  const fresh = await codex.request<ThreadResponse>("thread/read", { threadId, includeTurns: true });
-  const totalTurns = fresh.thread.turns.length;
+  const fresh = await codex
+    .request<ThreadResponse>("thread/read", { threadId, includeTurns: true })
+    .catch((error) => {
+      if (isMissingRolloutError(error)) {
+        return null;
+      }
+
+      throw error;
+    });
+  const totalTurns = fresh?.thread.turns.length ?? 0;
 
   if (!totalTurns) {
     response.json({ thread: detail });
@@ -429,6 +640,14 @@ async function start() {
 }
 
 void start();
+
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught exception:", error);
+});
+
+process.on("unhandledRejection", (error) => {
+  console.error("Unhandled rejection:", error);
+});
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {

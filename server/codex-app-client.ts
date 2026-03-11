@@ -81,6 +81,12 @@ export class CodexAppClient extends EventEmitter {
     this.child = null;
     this.socket = null;
     this.ready = false;
+    this.initialized = false;
+  }
+
+  async restart() {
+    await this.stop();
+    await this.start();
   }
 
   async request<T>(method: string, params?: unknown): Promise<T> {

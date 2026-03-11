@@ -40,6 +40,21 @@ export type BootstrapResponse = {
   selectedThread: SessionDetail | null;
 };
 
+export type AccountInfo = {
+  planLabel: string;
+  accountLabel: string;
+  remaining5hLabel: string;
+  reset5hLabel: string;
+  remaining7dLabel: string;
+  reset7dLabel: string;
+  updatedAt: number;
+};
+
+export type CodexConfigInfo = {
+  path: string;
+  content: string;
+};
+
 export type Theme = {
   id: string;
   label: string;
