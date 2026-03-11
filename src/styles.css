@@ -529,11 +529,26 @@ pre {
   gap: 6px;
 }
 
-.message-head strong {
-  font-size: 0.85rem;
+.message-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
 }
 
-.message-head span {
+.message-head .message-title span {
+  font-family: var(--font-display);
+  font-size: 1.08rem;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: 0.01em;
+}
+
+.message-title svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.message-toolbar span {
   color: var(--muted);
   font-size: 0.74rem;
 }
@@ -589,6 +604,37 @@ pre {
 }
 
 .markdown-message pre code {
+  display: block;
+  padding: 10px;
+  overflow: auto;
+}
+
+.code-block {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.03);
+  overflow: hidden;
+}
+
+.code-block-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 34px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel-strong) 88%, transparent);
+}
+
+.code-block-toolbar span {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  text-transform: lowercase;
+  color: var(--muted);
+}
+
+.code-block code {
   display: block;
   padding: 10px;
   overflow: auto;

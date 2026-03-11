@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   Activity,
+  Bot,
   CircleStop,
   CircleX,
   Copy,
@@ -22,7 +23,8 @@ import {
   Settings2,
   SquarePen,
   Sparkles,
-  Trash2
+  Trash2,
+  UserRound
 } from "lucide-react";
 import type { AccountInfo, BootstrapResponse, CodexConfigInfo, SessionDetail, SessionSummary, Theme } from "./types";
 
@@ -89,6 +91,18 @@ function isExpandable(text: string) {
   return text.length > 420 || text.split("\n").length > 10;
 }
 
+function messageIdentityIcon(role: "user" | "assistant" | "system") {
+  if (role === "user") {
+    return <UserRound size={14} />;
+  }
+
+  if (role === "assistant") {
+    return <Bot size={14} />;
+  }
+
+  return null;
+}
+
 function applyPermissiveCodexPreset(content: string) {
   void content;
   return `model = "gpt-5.4"
@@ -119,6 +133,7 @@ function App() {
   const [isActivityOpen, setIsActivityOpen] = useState(false);
   const [expandedMessages, setExpandedMessages] = useState<Record<string, boolean>>({});
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
   const [account, setAccount] = useState<AccountInfo | null>(null);
   const [configDraft, setConfigDraft] = useState("");
   const [configPath, setConfigPath] = useState("");
@@ -469,6 +484,91 @@ function App() {
     }
   }
 
+  function extractCodeText(children: ReactNode): string {
+    if (typeof children === "string") {
+      return children.replace(/\n$/, "");
+    }
+
+    if (typeof children === "number") {
+      return String(children);
+    }
+
+    if (Array.isArray(children)) {
+      return children.map(extractCodeText).join("").replace(/\n$/, "");
+    }
+
+    if (children && typeof children === "object" && "props" in children) {
+      return extractCodeText((children as { props?: { children?: ReactNode } }).props?.children);
+    }
+
+    return "";
+  }
+
+  async function handleCopyCode(codeId: string, text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedCodeId(codeId);
+      window.setTimeout(() => {
+        setCopiedCodeId((current) => (current === codeId ? null : current));
+      }, 1200);
+    } catch {
+      setError("Unable to copy code block.");
+    }
+  }
+
+  function renderMarkdown(text: string) {
+    return (
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          pre(props) {
+            const { children } = props as { children?: ReactNode };
+            const firstChild = Array.isArray(children) ? children[0] : children;
+            const className =
+              firstChild && typeof firstChild === "object" && "props" in firstChild
+                ? ((firstChild as { props?: { className?: string } }).props?.className ?? "")
+                : "";
+            const codeText = extractCodeText(children);
+            const language = className.replace("language-", "") || "";
+            const codeId = `${language}:${codeText.slice(0, 80)}`;
+
+            return (
+              <div className="code-block">
+                <div className="code-block-toolbar">
+                  <span>{language || "code"}</span>
+                  <button
+                    type="button"
+                    className="message-icon-button"
+                    onClick={() => void handleCopyCode(codeId, codeText)}
+                    aria-label="Copy code block"
+                    title={copiedCodeId === codeId ? "Copied" : "Copy code"}
+                  >
+                    <Copy size={14} />
+                  </button>
+                </div>
+                <pre>{children}</pre>
+              </div>
+            );
+          },
+          code(props) {
+            const { className, children, ...rest } = props as {
+              className?: string;
+              children?: ReactNode;
+            };
+
+            return (
+              <code className={className} {...rest}>
+                {children}
+              </code>
+            );
+          }
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+    );
+  }
+
   function toggleMessageExpanded(messageId: string) {
     setExpandedMessages((previous) => ({
       ...previous,
@@ -616,7 +716,10 @@ function App() {
                 conversationMessages.map((entry) => (
                   <article key={entry.id} className={`message-card message-${entry.role} message-kind-${entry.kind}`}>
                     <div className="message-head">
-                      <strong>{entry.title}</strong>
+                      <strong className="message-title">
+                        {messageIdentityIcon(entry.role)}
+                        <span>{entry.title}</span>
+                      </strong>
                       <div className="message-toolbar">
                         {isExpandable(entry.text) ? (
                           <button
@@ -637,11 +740,10 @@ function App() {
                         >
                           <Copy size={14} />
                         </button>
-                        {entry.status ? <span>{entry.status}</span> : null}
                       </div>
                     </div>
                     <div className={`markdown-message ${expandedMessages[entry.id] ? "expanded" : ""}`}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{entry.text}</ReactMarkdown>
+                      {renderMarkdown(entry.text)}
                     </div>
                   </article>
                 ))
@@ -937,7 +1039,7 @@ function App() {
                       </div>
                     </div>
                     <div className={`markdown-message ${expandedMessages[entry.id] ? "expanded" : ""}`}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{entry.text}</ReactMarkdown>
+                      {renderMarkdown(entry.text)}
                     </div>
                   </article>
                 ))
