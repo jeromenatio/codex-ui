@@ -26,7 +26,7 @@ type JsonRpcNotification = {
 };
 
 export class CodexAppClient extends EventEmitter {
-  private readonly cwd: string;
+  private cwd: string;
   private readonly listenUrl: string;
   private child: ChildProcessWithoutNullStreams | null = null;
   private socket: WebSocket | null = null;
@@ -46,6 +46,14 @@ export class CodexAppClient extends EventEmitter {
     this.cwd = options.cwd;
     const port = options.port ?? 4317;
     this.listenUrl = `ws://127.0.0.1:${port}`;
+  }
+
+  getCwd() {
+    return this.cwd;
+  }
+
+  setCwd(nextCwd: string) {
+    this.cwd = nextCwd;
   }
 
   async start() {

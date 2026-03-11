@@ -14,12 +14,13 @@ const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "..");
 const clientDist = path.join(rootDir, "dist");
 const codexConfigPath = path.join(process.env.HOME ?? "/root", ".codex", "config.toml");
+let activeWorkspaceDir = rootDir;
 
 const app = express();
 app.use(express.json());
 const execFileAsync = promisify(execFile);
 
-const codex = new CodexAppClient({ cwd: rootDir });
+const codex = new CodexAppClient({ cwd: activeWorkspaceDir });
 const store = new SessionStore();
 const sseClients = new Set<express.Response>();
 
@@ -52,6 +53,30 @@ async function readCodexConfig(): Promise<CodexConfigInfo> {
 async function restartCodex() {
   await codex.restart();
   await listThreads();
+}
+
+async function ensureWorkspaceDir(workspacePath: string) {
+  await fs.mkdir(workspacePath, { recursive: true });
+}
+
+function resolveWorkspaceDir(input?: string | null) {
+  const raw = input?.trim();
+  if (!raw) {
+    return activeWorkspaceDir;
+  }
+
+  return path.resolve(raw.startsWith("/") ? raw : path.join(activeWorkspaceDir, raw));
+}
+
+async function switchWorkspace(workspacePath: string) {
+  if (activeWorkspaceDir === workspacePath) {
+    return;
+  }
+
+  await ensureWorkspaceDir(workspacePath);
+  activeWorkspaceDir = workspacePath;
+  codex.setCwd(workspacePath);
+  process.chdir(workspacePath);
 }
 
 async function listThreads() {
@@ -125,12 +150,17 @@ async function loadThread(threadId: string) {
     }
   }
 
-  return store.setThread(response.thread as Thread);
+  const detail = store.setThread(response.thread as Thread);
+  await switchWorkspace(detail.summary.cwd);
+  return detail;
 }
 
-async function createThread(name?: string | null) {
+async function createThread(name?: string | null, workspacePath?: string | null) {
+  const targetWorkspaceDir = resolveWorkspaceDir(workspacePath);
+  await ensureWorkspaceDir(targetWorkspaceDir);
+
   const response = await codex.request<ThreadResponse & { model: string }>("thread/start", {
-    cwd: rootDir,
+    cwd: targetWorkspaceDir,
     approvalPolicy: "never",
     sandbox: "danger-full-access",
     persistExtendedHistory: true,
@@ -142,7 +172,9 @@ async function createThread(name?: string | null) {
     response.thread.name = name;
   }
 
-  return store.setThread(response.thread as Thread);
+  const detail = store.setThread(response.thread as Thread);
+  await switchWorkspace(detail.summary.cwd);
+  return detail;
 }
 
 function detailFromStore(threadId: string): SessionDetail | null {
@@ -241,6 +273,12 @@ codex.on("notification", async (message: { method: string; params?: Record<strin
   if (message.method === "thread/name/updated" && threadId) {
     const name = typeof params.threadName === "string" ? params.threadName : null;
     store.updateSummary(threadId, { name });
+    broadcast("sessions", store.getSummaries());
+    return;
+  }
+
+  if (message.method === "thread/archived" && threadId) {
+    store.removeThread(threadId);
     broadcast("sessions", store.getSummaries());
     return;
   }
@@ -475,7 +513,8 @@ app.get("/api/sessions/:threadId", async (request, response) => {
 
 app.post("/api/sessions", async (request, response) => {
   const name = typeof request.body?.name === "string" ? request.body.name.trim() : "";
-  const detail = await createThread(name || null);
+  const cwd = typeof request.body?.cwd === "string" ? request.body.cwd.trim() : "";
+  const detail = await createThread(name || null, cwd || null);
   await listThreads();
   broadcast("sessions", store.getSummaries());
   broadcast("thread", detail);
@@ -605,6 +644,27 @@ app.post("/api/sessions/:threadId/clear", async (request, response) => {
   const reloaded = await loadThread(threadId);
   broadcast("thread", reloaded);
   response.json({ thread: reloaded, removedTurns: turns });
+});
+
+app.delete("/api/sessions/:threadId", async (request, response) => {
+  const threadId = request.params.threadId;
+
+  await codex.request("thread/archive", { threadId });
+  store.removeThread(threadId);
+
+  const sessions = await listThreads();
+  const fallbackThread = sessions[0] ? await loadThread(sessions[0].id).catch(() => null) : null;
+
+  broadcast("sessions", store.getSummaries());
+  if (fallbackThread) {
+    broadcast("thread", fallbackThread);
+  }
+
+  response.json({
+    ok: true,
+    sessions: store.getSummaries(),
+    selectedThread: fallbackThread
+  });
 });
 
 app.get("/events", (request, response) => {

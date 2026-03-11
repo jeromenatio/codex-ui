@@ -241,6 +241,15 @@ export class SessionStore {
   }
 
   setSummaries(threads: Thread[]) {
+    const nextIds = new Set(threads.map((thread) => thread.id));
+
+    for (const existingId of this.summaries.keys()) {
+      if (!nextIds.has(existingId)) {
+        this.summaries.delete(existingId);
+        this.details.delete(existingId);
+      }
+    }
+
     for (const thread of threads) {
       this.summaries.set(thread.id, {
         id: thread.id,
@@ -334,6 +343,11 @@ export class SessionStore {
 
     current.currentTurnId = null;
     return current;
+  }
+
+  removeThread(threadId: string) {
+    this.details.delete(threadId);
+    this.summaries.delete(threadId);
   }
 }
 

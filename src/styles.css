@@ -801,6 +801,52 @@ pre {
   padding-right: 2px;
 }
 
+.session-admin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  flex: 1 1 auto;
+  max-height: calc(100dvh - 150px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.session-admin-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.session-admin-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.session-admin-copy strong,
+.session-admin-copy span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-admin-copy strong {
+  font-size: 0.88rem;
+}
+
+.session-admin-copy span {
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
 .activity-card {
   padding: 12px 13px;
   border: 1px solid var(--border);

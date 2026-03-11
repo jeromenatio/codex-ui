@@ -7,6 +7,7 @@ import {
   CircleX,
   Copy,
   Expand,
+  FolderOpen,
   Minimize2,
   MessagesSquare,
   Eraser,
@@ -20,7 +21,8 @@ import {
   SendHorizonal,
   Settings2,
   SquarePen,
-  Sparkles
+  Sparkles,
+  Trash2
 } from "lucide-react";
 import type { AccountInfo, BootstrapResponse, CodexConfigInfo, SessionDetail, SessionSummary, Theme } from "./types";
 
@@ -107,6 +109,7 @@ function App() {
   const [currentThread, setCurrentThread] = useState<SessionDetail | null>(null);
   const [message, setMessage] = useState("");
   const [newSessionName, setNewSessionName] = useState("");
+  const [newSessionPath, setNewSessionPath] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isPosting, setIsPosting] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -121,6 +124,9 @@ function App() {
   const [configPath, setConfigPath] = useState("");
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [isConfigSaving, setIsConfigSaving] = useState(false);
+  const [isSessionsOverlayOpen, setIsSessionsOverlayOpen] = useState(false);
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pendingAutoScrollRef = useRef(false);
@@ -250,6 +256,14 @@ function App() {
   }, [selectedThreadId]);
 
   useEffect(() => {
+    if (!isCreateModalOpen) {
+      return;
+    }
+
+    setNewSessionPath((current) => current || currentThread?.summary.cwd || "/projects/codex-ui");
+  }, [currentThread?.summary.cwd, isCreateModalOpen]);
+
+  useEffect(() => {
     const events = new EventSource("/events");
 
     events.addEventListener("sessions", (event) => {
@@ -338,12 +352,14 @@ function App() {
       const data = await fetchJson<{ thread: SessionDetail }>("/api/sessions", {
         method: "POST",
         body: JSON.stringify({
-          name: newSessionName.trim() || null
+          name: newSessionName.trim() || null,
+          cwd: newSessionPath.trim() || null
         })
       });
 
       setCurrentThread(data.thread);
       setNewSessionName("");
+      setNewSessionPath(data.thread.summary.cwd);
       setIsCreateModalOpen(false);
       await refreshSessions();
       localStorage.setItem(THREAD_KEY, data.thread.summary.id);
@@ -488,6 +504,46 @@ function App() {
     }
   }
 
+  async function handleRefresh() {
+    setIsRefreshing(true);
+    try {
+      await bootstrap();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }
+
+  async function handleDeleteSession(session: SessionSummary) {
+    const confirmed = window.confirm(`Delete session "${deriveSessionTitle(session)}" ?`);
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingSessionId(session.id);
+
+    try {
+      const data = await fetchJson<{ sessions: SessionSummary[]; selectedThread: SessionDetail | null }>(
+        `/api/sessions/${session.id}`,
+        { method: "DELETE" }
+      );
+
+      setSessions(data.sessions);
+      setCurrentThread(data.selectedThread);
+
+      if (data.selectedThread) {
+        localStorage.setItem(THREAD_KEY, data.selectedThread.summary.id);
+      } else {
+        localStorage.removeItem(THREAD_KEY);
+      }
+
+      setError(null);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unable to delete this session.");
+    } finally {
+      setDeletingSessionId(null);
+    }
+  }
+
   return (
     <div className="app-shell" data-theme={theme}>
       <nav className="topbar">
@@ -502,6 +558,16 @@ function App() {
         </div>
 
         <div className="topbar-actions">
+          <button className="ghost-button" type="button" onClick={() => void handleOpenConfig()}>
+            <Settings2 size={16} />
+            Configs
+          </button>
+
+          <button className="ghost-button" type="button" onClick={() => setIsSessionsOverlayOpen(true)}>
+            <FolderOpen size={16} />
+            Sessions
+          </button>
+
           <label className="theme-switcher">
             <Palette size={16} />
             <select value={theme} onChange={(event) => setTheme(event.target.value)}>
@@ -513,14 +579,9 @@ function App() {
             </select>
           </label>
 
-          <button className="ghost-button" type="button" onClick={() => void refreshSessions()}>
+          <button className="ghost-button" type="button" onClick={() => void handleRefresh()} disabled={isRefreshing}>
             <RefreshCw size={16} />
-            Refresh
-          </button>
-
-          <button className="ghost-button" type="button" onClick={() => void handleOpenConfig()}>
-            <Settings2 size={16} />
-            Config
+            {isRefreshing ? "Refreshing..." : "Refresh"}
           </button>
         </div>
       </nav>
@@ -757,6 +818,12 @@ function App() {
               autoFocus
             />
 
+            <input
+              value={newSessionPath}
+              onChange={(event) => setNewSessionPath(event.target.value)}
+              placeholder="/projects/my-workspace"
+            />
+
             <div className="modal-actions">
               <button
                 type="button"
@@ -774,6 +841,52 @@ function App() {
                 <Plus size={16} />
                 {isCreating ? "Creating..." : "Create"}
               </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {isSessionsOverlayOpen ? (
+        <div className="modal-backdrop" onClick={() => setIsSessionsOverlayOpen(false)}>
+          <section className="modal-card modal-card-wide" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <h3>Manage sessions</h3>
+              <button
+                type="button"
+                className="ghost-button subtle icon-button"
+                onClick={() => setIsSessionsOverlayOpen(false)}
+                aria-label="Close sessions overlay"
+              >
+                <CircleX size={16} />
+              </button>
+            </div>
+
+            <div className="session-admin-list">
+              {sessions.length ? (
+                sessions.map((entry) => (
+                  <article key={entry.id} className="session-admin-row">
+                    <div className="session-admin-copy">
+                      <strong>{deriveSessionTitle(entry)}</strong>
+                      <span>
+                        {formatSessionDate(entry.updatedAt)} · {entry.cwd}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="ghost-button danger"
+                      onClick={() => void handleDeleteSession(entry)}
+                      disabled={deletingSessionId === entry.id}
+                    >
+                      <Trash2 size={15} />
+                      {deletingSessionId === entry.id ? "Deleting..." : "Delete"}
+                    </button>
+                  </article>
+                ))
+              ) : (
+                <div className="empty-state compact-empty">
+                  <p>No sessions available.</p>
+                </div>
+              )}
             </div>
           </section>
         </div>
