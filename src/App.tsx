@@ -429,6 +429,20 @@ function App() {
     }
 
     try {
+      setCurrentThread((previous) =>
+        previous
+          ? {
+              ...previous,
+              liveStatus: {
+                ...previous.liveStatus,
+                tone: "waiting",
+                label: "Stopping",
+                detail: "Interrupt requested.",
+                updatedAt: Date.now()
+              }
+            }
+          : previous
+      );
       await fetchJson(`/api/sessions/${currentThread.summary.id}/stop`, {
         method: "POST"
       });
@@ -438,22 +452,9 @@ function App() {
     }
   }
 
-  async function handleClear() {
-    if (!currentThread) {
-      return;
-    }
-
-    try {
-      const data = await fetchJson<{ thread: SessionDetail }>(
-        `/api/sessions/${currentThread.summary.id}/clear`,
-        { method: "POST" }
-      );
-      setCurrentThread(data.thread);
-      await refreshSessions();
-      setError(null);
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to clear this session.");
-    }
+  function handleClear() {
+    setMessage("");
+    setError(null);
   }
 
   async function handleCopyMessage(messageId: string, text: string) {
@@ -722,7 +723,7 @@ function App() {
                     type="button"
                     className="ghost-button subtle stop-button"
                     onClick={() => void handleStop()}
-                    disabled={!currentThread?.currentTurnId}
+                    disabled={!currentThread || (!currentThread.currentTurnId && !isBusy)}
                   >
                     <CircleStop size={15} />
                     Stop
@@ -731,8 +732,8 @@ function App() {
                   <button
                     type="button"
                     className="ghost-button subtle clear-button"
-                    onClick={() => void handleClear()}
-                    disabled={!currentThread}
+                    onClick={handleClear}
+                    disabled={!message}
                   >
                     <Eraser size={15} />
                     Clear

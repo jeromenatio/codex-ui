@@ -602,50 +602,6 @@ app.post("/api/sessions/:threadId/stop", async (request, response) => {
   response.json({ ok: true });
 });
 
-app.post("/api/sessions/:threadId/clear", async (request, response) => {
-  const threadId = request.params.threadId;
-  const detail =
-    (await loadThread(threadId).catch((error) => {
-      if (isMissingRolloutError(error)) {
-        return detailFromStore(threadId);
-      }
-
-      throw error;
-    })) ?? null;
-
-  if (!detail) {
-    response.status(404).json({ error: "Session not found." });
-    return;
-  }
-
-  const turns = Math.ceil(detail.messages.length / 2);
-
-  const fresh = await codex
-    .request<ThreadResponse>("thread/read", { threadId, includeTurns: true })
-    .catch((error) => {
-      if (isMissingRolloutError(error)) {
-        return null;
-      }
-
-      throw error;
-    });
-  const totalTurns = fresh?.thread.turns.length ?? 0;
-
-  if (!totalTurns) {
-    response.json({ thread: detail });
-    return;
-  }
-
-  await codex.request("thread/rollback", {
-    threadId,
-    numTurns: totalTurns
-  });
-
-  const reloaded = await loadThread(threadId);
-  broadcast("thread", reloaded);
-  response.json({ thread: reloaded, removedTurns: turns });
-});
-
 app.delete("/api/sessions/:threadId", async (request, response) => {
   const threadId = request.params.threadId;
 
