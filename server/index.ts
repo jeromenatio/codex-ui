@@ -670,7 +670,8 @@ codex.on("notification", async (message: { method: string; params?: Record<strin
 
   if (message.method === "item/completed" && threadId) {
     const item = params.item as ThreadItem;
-    const next = store.appendMessage(threadId, mapItem(item));
+    const turnId = typeof params.turnId === "string" ? params.turnId : detailFromStore(threadId)?.currentTurnId ?? null;
+    const next = store.appendMessage(threadId, mapItem(item, turnId));
     if (next) {
       broadcast("thread", next);
     }
@@ -1067,12 +1068,10 @@ app.get("/events", (request, response) => {
   });
 });
 
-if (process.env.NODE_ENV === "production") {
-  app.use(express.static(clientDist));
-  app.get("/{*path}", (_request, response) => {
-    response.sendFile(path.join(clientDist, "index.html"));
-  });
-}
+app.use(express.static(clientDist));
+app.get("/{*path}", (_request, response) => {
+  response.sendFile(path.join(clientDist, "index.html"));
+});
 
 const port = Number(process.env.PORT ?? 3001);
 

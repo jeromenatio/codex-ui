@@ -892,6 +892,24 @@ pre {
   margin-top: 10px;
 }
 
+.inline-activity {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.inline-activity-toggle {
+  align-self: flex-end;
+}
+
+.inline-activity-list {
+  max-height: none;
+  overflow: visible;
+  padding-right: 0;
+}
+
 .conversation-attachment {
   display: flex;
   align-items: center;

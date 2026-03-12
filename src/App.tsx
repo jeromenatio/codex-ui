@@ -372,7 +372,6 @@ function App() {
   const [theme, setTheme] = useState<string>(() => resolveTheme(window.localStorage.getItem(THEME_KEY)));
   const [language, setLanguage] = useState<Locale>(() => resolveStoredLanguage());
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [isActivityOpen, setIsActivityOpen] = useState(false);
   const [expandedMessages, setExpandedMessages] = useState<Record<string, boolean>>({});
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
@@ -430,13 +429,6 @@ function App() {
     () =>
       currentThread?.messages.filter(
         (entry) => entry.role === "user" || (entry.role === "assistant" && entry.phase !== "commentary")
-      ) ?? [],
-    [currentThread?.messages]
-  );
-  const activityMessages = useMemo(
-    () =>
-      currentThread?.messages.filter(
-        (entry) => !(entry.role === "user" || (entry.role === "assistant" && entry.phase !== "commentary"))
       ) ?? [],
     [currentThread?.messages]
   );
@@ -503,6 +495,91 @@ function App() {
     const key = known[text];
     return key ? translator(key) : text;
   }
+
+  function messageTurnId(message: SessionDetail["messages"][number]) {
+    const turnId = message.meta?.turnId;
+    return typeof turnId === "string" ? turnId : null;
+  }
+
+  const activityByAnchorMessageId = useMemo(() => {
+    const grouped: Record<string, SessionDetail["messages"]> = {};
+    if (!currentThread) {
+      return grouped;
+    }
+
+    const turnBuckets = new Map<
+      string,
+      {
+        userId: string | null;
+        assistantId: string | null;
+        activities: SessionDetail["messages"];
+      }
+    >();
+    let fallbackUserId: string | null = null;
+
+    for (const entry of currentThread.messages) {
+      const isConversationEntry = entry.role === "user" || (entry.role === "assistant" && entry.phase !== "commentary");
+      const turnId = messageTurnId(entry);
+      const bucket =
+        turnId
+          ? (turnBuckets.get(turnId) ??
+            (() => {
+              const next = { userId: null, assistantId: null, activities: [] as SessionDetail["messages"] };
+              turnBuckets.set(turnId, next);
+              return next;
+            })())
+          : null;
+
+      if (entry.role === "user") {
+        fallbackUserId = entry.id;
+        grouped[entry.id] = grouped[entry.id] ?? [];
+        if (bucket) {
+          bucket.userId = entry.id;
+        }
+        continue;
+      }
+
+      if (entry.role === "assistant" && entry.phase !== "commentary") {
+        if (bucket) {
+          bucket.assistantId = entry.id;
+          grouped[entry.id] = grouped[entry.id] ?? [];
+        }
+        continue;
+      }
+
+      if (isConversationEntry) {
+        continue;
+      }
+
+      if (bucket) {
+        bucket.activities.push(entry);
+        continue;
+      }
+
+      if (!fallbackUserId) {
+        continue;
+      }
+
+      grouped[fallbackUserId] = grouped[fallbackUserId] ?? [];
+      grouped[fallbackUserId].push(entry);
+    }
+
+    for (const bucket of turnBuckets.values()) {
+      if (!bucket.activities.length) {
+        continue;
+      }
+
+      const anchorId = bucket.assistantId ?? bucket.userId;
+      if (!anchorId) {
+        continue;
+      }
+
+      grouped[anchorId] = grouped[anchorId] ?? [];
+      grouped[anchorId].push(...bucket.activities);
+    }
+
+    return grouped;
+  }, [currentThread]);
 
   async function refreshSessions() {
     const data = await fetchJson<{ sessions: SessionSummary[] }>("/api/sessions");
@@ -1367,6 +1444,65 @@ function App() {
     );
   }
 
+  function renderInlineActivity(anchorMessageId: string) {
+    const activities = activityByAnchorMessageId[anchorMessageId] ?? [];
+    if (!activities.length) {
+      return null;
+    }
+
+    const isExpanded = Boolean(expandedMessages[`activity:${anchorMessageId}`]);
+
+    return (
+      <div className="inline-activity">
+        <button
+          type="button"
+          className="ghost-button subtle inline-activity-toggle"
+          onClick={() => toggleMessageExpanded(`activity:${anchorMessageId}`)}
+        >
+          <Activity size={15} />
+          {t("button.activity")}
+          <span className="meta-tag">{t("label.activity_count", { count: activities.length })}</span>
+        </button>
+
+        {isExpanded ? (
+          <div className="activity-list inline-activity-list">
+            {activities.map((entry) => (
+              <article key={entry.id} className="activity-card">
+                <div className="message-head">
+                  <strong>{localizeKnownUiText(entry.title, t)}</strong>
+                  <div className="message-toolbar">
+                    {isExpandable(entry.text) ? (
+                      <button
+                        type="button"
+                        className="message-icon-button"
+                        onClick={() => toggleMessageExpanded(entry.id)}
+                        aria-label={expandedMessages[entry.id] ? t("aria.collapse_activity") : t("aria.expand_activity")}
+                      >
+                        {expandedMessages[entry.id] ? <Minimize2 size={14} /> : <Expand size={14} />}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="message-icon-button"
+                      onClick={() => void handleCopyMessage(entry.id, entry.text)}
+                      aria-label={t("aria.copy_activity")}
+                    >
+                      <Copy size={14} />
+                    </button>
+                    {entry.status ? <span>{entry.status}</span> : null}
+                  </div>
+                </div>
+                <div className={`markdown-message ${expandedMessages[entry.id] ? "expanded" : ""}`}>
+                  {renderMarkdown(entry.text)}
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   async function handleOpenConfig() {
     await refreshConfig();
     setIsConfigOpen(true);
@@ -1587,15 +1723,6 @@ function App() {
               <MessagesSquare size={15} />
               <h2>{t("section.conversation")}</h2>
             </div>
-            <button
-              type="button"
-              className="ghost-button subtle"
-              onClick={() => setIsActivityOpen(true)}
-              disabled={!activityMessages.length}
-            >
-              <Activity size={15} />
-              {t("section.activity")}
-            </button>
           </div>
 
           <div className="conversation-panel" ref={scrollRef}>
@@ -1639,6 +1766,7 @@ function App() {
                       {renderMarkdown(entry.text)}
                     </div>
                     {renderMessageAttachments(entry.attachments)}
+                    {entry.role === "assistant" && entry.phase !== "commentary" ? renderInlineActivity(entry.id) : null}
                   </article>
                 ))
               ) : (
@@ -2300,64 +2428,6 @@ function App() {
               ) : (
                 <div className="empty-state compact-empty">
                   <p>{t("empty.no_sessions")}</p>
-                </div>
-              )}
-            </div>
-          </section>
-        </div>
-      ) : null}
-
-      {isActivityOpen ? (
-        <div className="modal-backdrop" onClick={() => setIsActivityOpen(false)}>
-          <section className="modal-card modal-card-wide" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-head">
-              <h3>{t("modal.activity_title")}</h3>
-              <button
-                type="button"
-                className="ghost-button subtle icon-button"
-                onClick={() => setIsActivityOpen(false)}
-                aria-label={t("aria.close_activity_modal")}
-              >
-                <CircleX size={16} />
-              </button>
-            </div>
-
-            <div className="activity-list">
-              {activityMessages.length ? (
-                activityMessages.map((entry) => (
-                  <article key={entry.id} className="activity-card">
-                    <div className="message-head">
-                      <strong>{localizeKnownUiText(entry.title, t)}</strong>
-                      <div className="message-toolbar">
-                        {isExpandable(entry.text) ? (
-                          <button
-                            type="button"
-                            className="message-icon-button"
-                            onClick={() => toggleMessageExpanded(entry.id)}
-                            aria-label={expandedMessages[entry.id] ? t("aria.collapse_activity") : t("aria.expand_activity")}
-                          >
-                            {expandedMessages[entry.id] ? <Minimize2 size={14} /> : <Expand size={14} />}
-                          </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          className="message-icon-button"
-                          onClick={() => void handleCopyMessage(entry.id, entry.text)}
-                          aria-label={t("aria.copy_activity")}
-                        >
-                          <Copy size={14} />
-                        </button>
-                        {entry.status ? <span>{entry.status}</span> : null}
-                      </div>
-                    </div>
-                    <div className={`markdown-message ${expandedMessages[entry.id] ? "expanded" : ""}`}>
-                      {renderMarkdown(entry.text)}
-                    </div>
-                  </article>
-                ))
-              ) : (
-                <div className="empty-state compact-empty">
-                  <p>{t("empty.no_activity")}</p>
                 </div>
               )}
             </div>

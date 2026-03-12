@@ -54,7 +54,9 @@ function joinUserText(item: Extract<ThreadItem, { type: "userMessage" }>) {
     .join("\n\n");
 }
 
-function mapItem(item: ThreadItem): UiMessage {
+function mapItem(item: ThreadItem, turnId?: string | null): UiMessage {
+  const turnMeta = turnId ? { turnId } : undefined;
+
   if (item.type === "userMessage") {
     return {
       id: item.id,
@@ -62,7 +64,8 @@ function mapItem(item: ThreadItem): UiMessage {
       role: "user",
       title: "You",
       text: joinUserText(item),
-      status: "sent"
+      status: "sent",
+      meta: turnMeta
     };
   }
 
@@ -74,7 +77,8 @@ function mapItem(item: ThreadItem): UiMessage {
       title: item.phase === "commentary" ? "Agent commentary" : "Codex",
       text: item.text,
       phase: item.phase ?? null,
-      status: "streaming"
+      status: "streaming",
+      meta: turnMeta
     };
   }
 
@@ -84,7 +88,8 @@ function mapItem(item: ThreadItem): UiMessage {
       kind: "plan",
       role: "system",
       title: "Plan",
-      text: item.text
+      text: item.text,
+      meta: turnMeta
     };
   }
 
@@ -94,7 +99,8 @@ function mapItem(item: ThreadItem): UiMessage {
       kind: "reasoning",
       role: "system",
       title: "Reasoning",
-      text: [...item.summary, ...item.content].filter(Boolean).join("\n")
+      text: [...item.summary, ...item.content].filter(Boolean).join("\n"),
+      meta: turnMeta
     };
   }
 
@@ -113,7 +119,8 @@ function mapItem(item: ThreadItem): UiMessage {
       role: "system",
       title: "Command",
       text: `${item.command}${meta ? `\n${meta}` : ""}${item.aggregatedOutput ? `\n\n${item.aggregatedOutput}` : ""}`,
-      status: item.status
+      status: item.status,
+      meta: turnMeta
     };
   }
 
@@ -128,7 +135,8 @@ function mapItem(item: ThreadItem): UiMessage {
       role: "system",
       title: "File changes",
       text: changeText || "Files changed.",
-      status: item.status
+      status: item.status,
+      meta: turnMeta
     };
   }
 
@@ -137,7 +145,8 @@ function mapItem(item: ThreadItem): UiMessage {
     kind: "tool",
     role: "system",
     title: "Agent activity",
-    text: item.type
+    text: item.type,
+    meta: turnMeta
   };
 }
 
@@ -244,7 +253,7 @@ export class SessionStore {
 
     const detail: SessionDetail = {
       summary,
-      messages: thread.turns.flatMap((turn) => turn.items.map(mapItem)),
+      messages: thread.turns.flatMap((turn) => turn.items.map((item) => mapItem(item, turn.id))),
       liveStatus: inferLiveStatus(thread),
       currentTurnId: [...thread.turns].reverse().find((turn) => turn.status === "inProgress")?.id ?? null
     };
@@ -331,7 +340,15 @@ export class SessionStore {
 
     const existingIndex = current.messages.findIndex((entry) => entry.id === message.id);
     if (existingIndex >= 0) {
-      current.messages[existingIndex] = message;
+      current.messages[existingIndex] = {
+        ...current.messages[existingIndex],
+        ...message,
+        attachments: message.attachments ?? current.messages[existingIndex].attachments,
+        meta: {
+          ...(current.messages[existingIndex].meta ?? {}),
+          ...(message.meta ?? {})
+        }
+      };
     } else {
       current.messages.push(message);
     }
