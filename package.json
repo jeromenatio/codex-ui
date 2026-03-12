@@ -14,7 +14,10 @@
     "build": "npm run build:client && npm run build:server",
     "build:client": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
-    "start": "node dist-server/index.js"
+    "start": "node dist-server/index.js",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:install": "playwright install chromium"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.6",
@@ -29,6 +32,7 @@
     "ws": "^8.18.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.52.0",
     "@types/express": "^5.0.3",
     "@types/node": "^24.5.2",
     "@types/react": "^19.1.13",

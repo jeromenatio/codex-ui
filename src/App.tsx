@@ -824,6 +824,7 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const themeMenuRef = useRef<HTMLDivElement | null>(null);
   const languageMenuRef = useRef<HTMLDivElement | null>(null);
+  const selectedThreadIdRef = useRef<string | null>(null);
   const lastScrollStateRef = useRef<{ threadId: string | null; count: number }>({
     threadId: null,
     count: 0
@@ -1186,8 +1187,11 @@ function App() {
     }
   }
 
-  async function loadThread(threadId: string, options?: { preserveError?: boolean }) {
+  async function loadThread(threadId: string, options?: { preserveError?: boolean; onlyIfCurrent?: boolean }) {
     const data = await fetchJson<{ thread: SessionDetail }>(`/api/sessions/${threadId}`);
+    if (options?.onlyIfCurrent && selectedThreadIdRef.current !== threadId) {
+      return;
+    }
     pendingAutoScrollRef.current = true;
     setCurrentThread(data.thread);
     setSessions((previous) => {
@@ -1252,6 +1256,10 @@ function App() {
   }, [language]);
 
   useEffect(() => {
+    selectedThreadIdRef.current = selectedThreadId;
+  }, [selectedThreadId]);
+
+  useEffect(() => {
     if (!isThemeMenuOpen) {
       return;
     }
@@ -1303,7 +1311,7 @@ function App() {
 
     const interval = window.setInterval(() => {
       void Promise.all([
-        loadThread(selectedThreadId, { preserveError: true }),
+        loadThread(selectedThreadId, { preserveError: true, onlyIfCurrent: true }),
         refreshSessions(),
         refreshAccount(selectedThreadId, language)
       ]).catch(() => {

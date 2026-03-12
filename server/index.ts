@@ -974,7 +974,12 @@ app.post("/api/sessions/:threadId/model", async (request, response) => {
 
   await setSessionModelOverride(threadId, model);
   const detail = await loadThread(threadId);
-  await listThreads();
+  detail.summary.model = model;
+  store.upsertDetail(detail);
+  await listThreads().catch(() => {
+    return store.getSummaries();
+  });
+  store.updateSummary(threadId, { model });
   broadcast("sessions", store.getSummaries());
   broadcast("thread", detail);
   response.json({ thread: detail, sessions: store.getSummaries() });
@@ -1102,13 +1107,19 @@ app.post("/api/sessions/:threadId/stop", async (request, response) => {
 
 app.delete("/api/sessions/:threadId", async (request, response) => {
   const threadId = request.params.threadId;
-  await setSessionModelOverride(threadId, null);
-  await clearThreadAttachments(threadId);
+  await setSessionModelOverride(threadId, null).catch(() => {
+    return;
+  });
+  await clearThreadAttachments(threadId).catch(() => {
+    return;
+  });
 
-  await codex.request("thread/archive", { threadId });
+  await codex.request("thread/archive", { threadId }).catch(() => {
+    return;
+  });
   store.removeThread(threadId);
 
-  const sessions = await listThreads();
+  const sessions = await listThreads().catch(() => store.getSummaries());
   const fallbackThread = sessions[0] ? await loadThread(sessions[0].id).catch(() => null) : null;
 
   broadcast("sessions", store.getSummaries());

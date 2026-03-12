@@ -108,6 +108,39 @@ URLs par defaut en dev :
 - UI Vite : `http://127.0.0.1:5173`
 - API Express : `http://127.0.0.1:3001`
 
+## UI Smoke Tests
+
+Playwright est maintenant intégré au projet comme dépendance de dev.
+
+Installation du navigateur Chromium :
+
+```bash
+npm run test:e2e:install
+```
+
+Exécution des smoke tests UI :
+
+```bash
+npm run test:e2e
+```
+
+Exécution visible :
+
+```bash
+npm run test:e2e:headed
+```
+
+Le setup :
+
+- démarre automatiquement l'app sur `http://127.0.0.1:4180`
+- réutilise un serveur déjà lancé sur ce port si présent
+- couvre les flows critiques : chat, diagnostics, files, archive zip, export, langue, configs, changement de modèle, images, clear composer, quick prompts, retry, stop, création et suppression de session
+
+Fichiers concernés :
+
+- `playwright.config.mjs`
+- `tests/ui-smoke.spec.js`
+
 ## Production Build
 
 Compile le frontend et le backend :
@@ -137,4 +170,3 @@ Quand tu lances ce projet, le serveur Node de ce dépôt sert l'interface web et
 
 - Si `codex` n'est pas installe ou n'est pas connecte, l'UI ne pourra pas charger les sessions.
 - Le premier demarrage peut prendre un peu plus de temps car le backend doit lancer `codex app-server`.
-- Le bouton `Apply full access preset` remplace entierement le contenu de `~/.codex/config.toml` avec un preset global permissif.

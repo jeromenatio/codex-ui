@@ -3,3 +3,5 @@ dist
 dist-server
 .runtime
 .DS_Store
+playwright-report
+test-results
