@@ -2,6 +2,8 @@
 
 Interface graphique pour piloter et suivre des sessions Codex synchronisées avec `codex app-server`.
 
+Ce dépôt contient directement l'interface web et son serveur Node.js. Sur une machine neuve, il ne suffit donc pas de cloner le repo : il faut aussi installer Node.js, installer `codex`, se connecter avec `codex login`, installer les dépendances du projet, puis lancer l'application.
+
 ## Prerequisites
 
 Cette UI a besoin de :
@@ -18,36 +20,79 @@ Versions utilisées pendant le développement :
 - `npm 11.9.0`
 - `codex-cli 0.114.0`
 
-## Fresh Install
+## Installation
 
-Sur une machine vierge :
+Ordre recommandé :
+
+1. installer les dépendances système et Node.js
+2. installer la CLI `codex`
+3. se connecter avec `codex login`
+4. cloner ce dépôt
+5. installer les dépendances JavaScript avec `npm install`
+6. lancer l'interface en mode dev ou en build de production
+
+## Vous êtes sur Ubuntu
+
+Commandes complètes, dans l'ordre :
+
+1. Installe `git`, Node.js et npm :
+
+```bash
+sudo apt-get update
+sudo apt-get upgrade -y
+sudo apt-get install -y git curl ca-certificates gnupg
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs
+```
+
+2. Installe Codex CLI :
+
+```bash
+sudo npm install -g @openai/codex
+```
+
+3. Connecte-toi à Codex :
+
+```bash
+codex login
+```
+
+4. Vérifie que Codex est bien installé et connecté :
+
+```bash
+codex --version
+codex login status
+```
+
+5. Clone le dépôt et installe ses dépendances :
 
 ```bash
 git clone https://github.com/jeromenatio/codex-ui.git
 cd codex-ui
 npm install
-codex login
 ```
 
-### Ubuntu one-liner
+6. Lance l'interface :
 
-Pour une fresh install Ubuntu, cette commande met a jour le systeme, installe Node.js, npm et Codex CLI :
+En développement :
 
 ```bash
-sudo apt-get update && sudo apt-get upgrade -y && sudo apt-get install -y curl ca-certificates gnupg && curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs && sudo npm install -g @openai/codex
+npm run dev
 ```
 
-Puis connecte Codex :
+En production :
 
 ```bash
-codex login
+npm run build
+npm start
 ```
 
-Vérifie ensuite que Codex est bien accessible :
+Par défaut, l'application compilée écoute sur `http://127.0.0.1:3001`.
+
+Pour choisir un autre port :
 
 ```bash
-codex --version
-codex login status
+PORT=4180 npm start
 ```
 
 ## Development
@@ -77,14 +122,6 @@ Puis lance l'application compilée :
 npm start
 ```
 
-Par defaut, le serveur ecoute sur `http://127.0.0.1:3001`.
-
-Pour choisir un autre port :
-
-```bash
-PORT=4180 npm start
-```
-
 ## Features Used By The UI
 
 Cette UI s'appuie sur :
@@ -93,6 +130,8 @@ Cette UI s'appuie sur :
 - les sessions Codex existantes
 - la lecture/ecriture de `~/.codex/config.toml`
 - les infos de compte et quotas via Codex
+
+Quand tu lances ce projet, le serveur Node de ce dépôt sert l'interface web et démarre aussi `codex app-server` en backend.
 
 ## Notes
 
