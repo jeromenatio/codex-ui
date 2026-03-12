@@ -40,7 +40,17 @@ import {
   Trash2,
   UserRound
 } from "lucide-react";
-import type { AccountInfo, AvailableModel, BootstrapResponse, CodexConfigInfo, SessionDetail, SessionSummary, Theme } from "./types";
+import type {
+  AccountInfo,
+  AvailableModel,
+  BootstrapResponse,
+  CodexConfigInfo,
+  MessageAttachment,
+  SessionDetail,
+  SessionSummary,
+  Theme,
+  UploadedAttachment
+} from "./types";
 
 const THEMES: Theme[] = [
   {
@@ -112,6 +122,17 @@ type AppNotification = {
   kind: NotificationKind;
   message: string;
 };
+type PendingAttachment = UploadedAttachment & {
+  previewUrl: string | null;
+};
+
+function isImageFile(file: File) {
+  if (file.type.startsWith("image/")) {
+    return true;
+  }
+
+  return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(file.name);
+}
 type QuickPrompt = {
   id: string;
   title: string;
@@ -318,11 +339,13 @@ function App() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [currentThread, setCurrentThread] = useState<SessionDetail | null>(null);
   const [message, setMessage] = useState("");
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [newSessionName, setNewSessionName] = useState("");
   const [newSessionPath, setNewSessionPath] = useState("");
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isPosting, setIsPosting] = useState(false);
+  const [isUploadingAttachments, setIsUploadingAttachments] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [theme, setTheme] = useState<string>(DEFAULT_THEME);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -338,6 +361,7 @@ function App() {
   const [isSessionsOverlayOpen, setIsSessionsOverlayOpen] = useState(false);
   const [isQuickPromptsOpen, setIsQuickPromptsOpen] = useState(false);
   const [isModelOverlayOpen, setIsModelOverlayOpen] = useState(false);
+  const [isImageOverlayOpen, setIsImageOverlayOpen] = useState(false);
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [quickPrompts, setQuickPrompts] = useState<QuickPrompt[]>(() => loadQuickPrompts());
@@ -364,6 +388,7 @@ function App() {
   const pendingAutoScrollRef = useRef(false);
   const scrollTimerRef = useRef<number | null>(null);
   const notificationIdRef = useRef(1);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastScrollStateRef = useRef<{ threadId: string | null; count: number }>({
     threadId: null,
     count: 0
@@ -442,6 +467,71 @@ function App() {
     const data = await fetchJson<{ config: CodexConfigInfo }>("/api/config");
     setConfigDraft(data.config.content);
     setConfigPath(data.config.path);
+  }
+
+  async function readFileAsBase64(file: File) {
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = typeof reader.result === "string" ? reader.result : "";
+        const [, contentBase64 = ""] = result.split(",", 2);
+        resolve(contentBase64);
+      };
+      reader.onerror = () => reject(reader.error ?? new Error("Unable to read file."));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleAttachmentSelection(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    if (!files.length) {
+      return;
+    }
+
+    const imageFiles = files.filter(isImageFile);
+    if (!imageFiles.length) {
+      notifyWarning("Only image attachments are supported.");
+      event.target.value = "";
+      return;
+    }
+
+    if (imageFiles.length !== files.length) {
+      notifyInfo("Only image files were kept.");
+    }
+
+    setIsUploadingAttachments(true);
+
+    try {
+      const payload = await Promise.all(
+        imageFiles.map(async (file) => ({
+          name: file.name,
+          mimeType: file.type || "application/octet-stream",
+          contentBase64: await readFileAsBase64(file),
+          previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : null
+        }))
+      );
+
+      const data = await fetchJson<{ attachments: UploadedAttachment[] }>("/api/attachments", {
+        method: "POST",
+        body: JSON.stringify({
+          attachments: payload.map(({ name, mimeType, contentBase64 }) => ({ name, mimeType, contentBase64 }))
+        })
+      });
+
+      setPendingAttachments((previous) => [
+        ...previous,
+        ...data.attachments.map((attachment, index) => ({
+          ...attachment,
+          previewUrl: payload[index]?.previewUrl ?? null
+        }))
+      ]);
+      notifySuccess(imageFiles.length === 1 ? "Image added." : "Images added.");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unable to add attachments.");
+    } finally {
+      setIsUploadingAttachments(false);
+      event.target.value = "";
+    }
   }
 
   async function loadAvailableModels() {
@@ -684,8 +774,13 @@ function App() {
       if (scrollTimerRef.current !== null) {
         window.clearTimeout(scrollTimerRef.current);
       }
+      pendingAttachments.forEach((attachment) => {
+        if (attachment.previewUrl) {
+          URL.revokeObjectURL(attachment.previewUrl);
+        }
+      });
     };
-  }, []);
+  }, [pendingAttachments]);
 
   useEffect(() => {
     const element = scrollRef.current;
@@ -762,7 +857,7 @@ function App() {
   }
 
   async function submitMessageText(submitted: string) {
-    if (!currentThread || !submitted.trim()) {
+    if (!currentThread || (!submitted.trim() && !pendingAttachments.length)) {
       if (!currentThread) {
         notifyWarning("Select a session before sending a quick prompt.");
       }
@@ -770,7 +865,9 @@ function App() {
     }
 
     const nextMessage = submitted.trim();
+    const nextAttachments = pendingAttachments;
     setMessage("");
+    setPendingAttachments([]);
     setIsPosting(true);
 
     setCurrentThread((previous) =>
@@ -784,7 +881,18 @@ function App() {
                 kind: "user",
                 role: "user",
                 title: "You",
-                text: nextMessage,
+                text: [nextMessage, ...nextAttachments.map((attachment) => `[Attached: ${attachment.name}]`)]
+                  .filter(Boolean)
+                  .join("\n\n"),
+                attachments: nextAttachments.map((attachment) => ({
+                  id: attachment.id,
+                  name: attachment.name,
+                  path: attachment.path,
+                  mimeType: attachment.mimeType,
+                  size: attachment.size,
+                  kind: attachment.kind,
+                  url: attachment.previewUrl ?? `/api/attachments/content?path=${encodeURIComponent(attachment.path)}`
+                })),
                 status: "queued"
               }
             ],
@@ -801,12 +909,23 @@ function App() {
     try {
       await fetchJson(`/api/sessions/${currentThread.summary.id}/messages`, {
         method: "POST",
-        body: JSON.stringify({ text: nextMessage })
+        body: JSON.stringify({
+          text: nextMessage,
+          attachments: nextAttachments.map(({ id, name, path, mimeType, size, kind }) => ({
+            id,
+            name,
+            path,
+            mimeType,
+            size,
+            kind
+          }))
+        })
       });
       await refreshSessions();
       setError(null);
     } catch (nextError) {
       setMessage(nextMessage);
+      setPendingAttachments(nextAttachments);
       setError(nextError instanceof Error ? nextError.message : "Unable to send the message.");
       await loadThread(currentThread.summary.id, { preserveError: true });
     } finally {
@@ -850,7 +969,27 @@ function App() {
 
   function handleClear() {
     setMessage("");
+    setPendingAttachments((previous) => {
+      previous.forEach((attachment) => {
+        if (attachment.previewUrl) {
+          URL.revokeObjectURL(attachment.previewUrl);
+        }
+      });
+      return [];
+    });
+    setIsImageOverlayOpen(false);
     setError(null);
+  }
+
+  function handleRemoveAttachment(attachmentId: string) {
+    setPendingAttachments((previous) => {
+      const next = previous.filter((attachment) => attachment.id !== attachmentId);
+      const removed = previous.find((attachment) => attachment.id === attachmentId);
+      if (removed?.previewUrl) {
+        URL.revokeObjectURL(removed.previewUrl);
+      }
+      return next;
+    });
   }
 
   function resetQuickPromptEditor() {
@@ -1147,6 +1286,36 @@ function App() {
     });
   }
 
+  function renderMessageAttachments(attachments: MessageAttachment[] | undefined) {
+    if (!attachments?.length) {
+      return null;
+    }
+
+    return (
+      <div className="conversation-attachments">
+        {attachments.map((attachment) => (
+          <article key={attachment.id} className="conversation-attachment">
+            <img src={attachment.url} alt={attachment.name} className="conversation-attachment-image" />
+
+            <div className="conversation-attachment-copy">
+              <strong>{attachment.name}</strong>
+              <span>{attachment.mimeType || "Image"}</span>
+            </div>
+
+            <a
+              className="ghost-button subtle"
+              href={attachment.url}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open
+            </a>
+          </article>
+        ))}
+      </div>
+    );
+  }
+
   async function handleOpenConfig() {
     await refreshConfig();
     setIsConfigOpen(true);
@@ -1402,6 +1571,7 @@ function App() {
                     <div className={`markdown-message ${expandedMessages[entry.id] ? "expanded" : ""}`}>
                       {renderMarkdown(entry.text)}
                     </div>
+                    {renderMessageAttachments(entry.attachments)}
                   </article>
                 ))
               ) : (
@@ -1491,6 +1661,16 @@ function App() {
               </div>
 
               <form className="composer" onSubmit={handleSubmit}>
+                <input
+                  id="composer-image-input"
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  className="visually-hidden"
+                  onChange={(event) => void handleAttachmentSelection(event)}
+                  disabled={!currentThread || isUploadingAttachments || isPosting}
+                />
+
                 <textarea
                   value={message}
                   onChange={(event) => setMessage(event.target.value)}
@@ -1510,9 +1690,24 @@ function App() {
 
                   <button
                     type="button"
+                    className={`ghost-button subtle ${!currentThread || isUploadingAttachments || isPosting ? "is-disabled" : ""}`}
+                    onClick={() => {
+                      if (!currentThread || isUploadingAttachments || isPosting) {
+                        return;
+                      }
+                      setIsImageOverlayOpen(true);
+                    }}
+                  >
+                    <Image size={15} />
+                    {isUploadingAttachments ? "Adding..." : "Attach"}
+                    {pendingAttachments.length ? <span className="attach-badge">{pendingAttachments.length}</span> : null}
+                  </button>
+
+                  <button
+                    type="button"
                     className="ghost-button subtle clear-button"
                     onClick={handleClear}
-                    disabled={!message}
+                    disabled={!message && !pendingAttachments.length}
                   >
                     <Eraser size={15} />
                     Clear
@@ -1521,7 +1716,7 @@ function App() {
                   <button
                     type="submit"
                     className="solid-button send-button"
-                    disabled={!currentThread || isPosting || !message.trim()}
+                    disabled={!currentThread || isPosting || (!message.trim() && !pendingAttachments.length)}
                   >
                     <SendHorizonal size={16} />
                     {isPosting ? "Sending..." : "Send"}
@@ -1703,6 +1898,69 @@ function App() {
               </button>
             </article>
           ))}
+        </div>
+      ) : null}
+
+      {isImageOverlayOpen ? (
+        <div className="modal-backdrop" onClick={() => setIsImageOverlayOpen(false)}>
+          <section className="modal-card modal-card-wide" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <h3>Attached images</h3>
+              <button
+                type="button"
+                className="ghost-button subtle icon-button"
+                onClick={() => setIsImageOverlayOpen(false)}
+                aria-label="Close image overlay"
+              >
+                <CircleX size={16} />
+              </button>
+            </div>
+
+            <p className="modal-copy">
+              Review the images attached to the next message. You can remove any image before sending.
+            </p>
+
+            <div className="modal-actions">
+              <label
+                className={`ghost-button subtle ${!currentThread || isUploadingAttachments || isPosting ? "is-disabled" : ""}`}
+                htmlFor={!currentThread || isUploadingAttachments || isPosting ? undefined : "composer-image-input"}
+                onClick={(event) => {
+                  if (!currentThread || isUploadingAttachments || isPosting) {
+                    event.preventDefault();
+                  }
+                }}
+              >
+                <Image size={15} />
+                {isUploadingAttachments ? "Adding..." : "Add images"}
+              </label>
+            </div>
+
+            <div className="attachment-list attachment-list-modal">
+              {pendingAttachments.length ? (
+                pendingAttachments.map((attachment) => (
+                  <article key={attachment.id} className="attachment-chip">
+                    <img src={attachment.previewUrl ?? attachment.path} alt={attachment.name} className="attachment-preview" />
+                    <div className="attachment-copy">
+                      <strong>{attachment.name}</strong>
+                      <span>Image</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="message-icon-button"
+                      onClick={() => handleRemoveAttachment(attachment.id)}
+                      aria-label={`Remove ${attachment.name}`}
+                    >
+                      <CircleX size={14} />
+                    </button>
+                  </article>
+                ))
+              ) : (
+                <div className="empty-state compact-empty">
+                  <p>No images attached.</p>
+                </div>
+              )}
+            </div>
+          </section>
         </div>
       ) : null}
 

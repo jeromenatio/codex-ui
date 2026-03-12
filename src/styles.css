@@ -885,6 +885,60 @@ pre {
   margin-bottom: 0;
 }
 
+.conversation-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.conversation-attachment {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--panel-strong) 88%, transparent);
+}
+
+.conversation-attachment-image {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  border-radius: 6px;
+}
+
+.conversation-attachment-image {
+  object-fit: cover;
+  border: 1px solid var(--border);
+}
+
+.conversation-attachment-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1 1 auto;
+}
+
+.conversation-attachment-copy strong,
+.conversation-attachment-copy span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-attachment-copy strong {
+  font-size: 0.82rem;
+}
+
+.conversation-attachment-copy span {
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
 .markdown-message p,
 .markdown-message ul,
 .markdown-message ol,
@@ -1027,6 +1081,18 @@ pre {
   padding: 0;
 }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .composer {
   display: flex;
   flex: 1 1 auto;
@@ -1034,6 +1100,65 @@ pre {
   gap: 10px;
   margin-top: 10px;
   min-height: 0;
+}
+
+.attachment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.attachment-list-modal {
+  max-height: calc(100dvh - 190px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.attachment-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+}
+
+.attachment-preview {
+  width: 38px;
+  height: 38px;
+  border-radius: 6px;
+  flex: 0 0 auto;
+}
+
+.attachment-preview {
+  object-fit: cover;
+  border: 1px solid var(--border);
+}
+
+.attachment-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1 1 auto;
+}
+
+.attachment-copy strong,
+.attachment-copy span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-copy strong {
+  font-size: 0.82rem;
+}
+
+.attachment-copy span {
+  font-size: 0.74rem;
+  color: var(--muted);
 }
 
 .composer-actions {
@@ -1047,6 +1172,26 @@ pre {
   padding: 0 10px;
   color: var(--muted);
   background: transparent;
+}
+
+.ghost-button.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.attach-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.68rem;
+  line-height: 1;
 }
 
 .stop-button {

@@ -27,6 +27,7 @@ export type UiMessage = {
   role: "user" | "assistant" | "system";
   title: string;
   text: string;
+  attachments?: MessageAttachment[];
   phase?: "commentary" | "final_answer" | null;
   status?: string;
   meta?: Record<string, string | number | boolean | null>;
@@ -70,4 +71,23 @@ export type AvailableModel = {
   description: string;
   hidden: boolean;
   isDefault: boolean;
+};
+
+export type UploadedAttachment = {
+  id: string;
+  name: string;
+  path: string;
+  mimeType: string;
+  size: number;
+  kind: "image";
+};
+
+export type MessageAttachment = {
+  id: string;
+  name: string;
+  path: string;
+  mimeType: string;
+  size: number;
+  kind: "image";
+  url: string;
 };

@@ -1,4 +1,4 @@
-import type { LiveStatus, SessionDetail, SessionSummary, ThreadStatusType, UiMessage } from "./types.js";
+import type { LiveStatus, MessageAttachment, SessionDetail, SessionSummary, ThreadStatusType, UiMessage } from "./types.js";
 
 export type ThreadItem =
   | { type: "userMessage"; id: string; content: Array<{ type: "text"; text: string }> }
@@ -141,6 +141,26 @@ function mapItem(item: ThreadItem): UiMessage {
   };
 }
 
+function applyAttachmentMetadata(messages: UiMessage[], attachmentsByText: Array<{ text: string; attachments: MessageAttachment[] }>) {
+  let attachmentIndex = 0;
+
+  for (const message of messages) {
+    if (message.role !== "user") {
+      continue;
+    }
+
+    const nextEntry = attachmentsByText[attachmentIndex];
+    if (!nextEntry) {
+      break;
+    }
+
+    if ((message.text || "").trim() === nextEntry.text.trim()) {
+      message.attachments = nextEntry.attachments;
+      attachmentIndex += 1;
+    }
+  }
+}
+
 function inferLiveStatus(thread: Thread): LiveStatus {
   if (!thread.turns.length) {
     return createLiveStatus({
@@ -210,7 +230,7 @@ export class SessionStore {
   private details = new Map<string, SessionDetail>();
   private summaries = new Map<string, SessionSummary>();
 
-  setThread(thread: Thread) {
+  setThread(thread: Thread, attachmentsByText: Array<{ text: string; attachments: MessageAttachment[] }> = []) {
     const summary: SessionSummary = {
       id: thread.id,
       name: thread.name,
@@ -228,6 +248,10 @@ export class SessionStore {
       liveStatus: inferLiveStatus(thread),
       currentTurnId: [...thread.turns].reverse().find((turn) => turn.status === "inProgress")?.id ?? null
     };
+
+    if (attachmentsByText.length) {
+      applyAttachmentMetadata(detail.messages, attachmentsByText);
+    }
 
     this.summaries.set(thread.id, summary);
     this.details.set(thread.id, detail);

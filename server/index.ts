@@ -1,6 +1,7 @@
 import path from "node:path";
 import os from "node:os";
 import process from "node:process";
+import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import { promisify } from "node:util";
@@ -8,7 +9,7 @@ import express from "express";
 import { fileURLToPath } from "node:url";
 import { CodexAppClient } from "./codex-app-client.js";
 import { SessionStore, mapItem, type Thread, type ThreadItem } from "./session-store.js";
-import type { AccountInfo, AvailableModel, CodexConfigInfo, SessionDetail } from "./types.js";
+import type { AccountInfo, AvailableModel, CodexConfigInfo, MessageAttachment, SessionDetail, UploadedAttachment } from "./types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,11 +17,13 @@ const rootDir = path.resolve(__dirname, "..");
 const clientDist = path.join(rootDir, "dist");
 const codexConfigPath = path.join(process.env.HOME ?? "/root", ".codex", "config.toml");
 const sessionModelsPath = path.join(process.env.HOME ?? "/root", ".codex", "codex-ui-session-models.json");
+const sessionAttachmentsPath = path.join(process.env.HOME ?? "/root", ".codex", "codex-ui-thread-attachments.json");
+const attachmentsRoot = path.join(os.tmpdir(), "codex-ui-attachments");
 const projectsRoot = "/projects";
 let activeWorkspaceDir = rootDir;
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "25mb" }));
 const execFileAsync = promisify(execFile);
 
 const codex = new CodexAppClient({ cwd: activeWorkspaceDir });
@@ -171,6 +174,45 @@ with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as arc
   };
 }
 
+function sanitizeFileName(fileName: string) {
+  return fileName.replace(/[^a-zA-Z0-9._-]/g, "-") || "attachment";
+}
+
+function isImageAttachment(mimeType: string, fileName: string) {
+  if (mimeType.startsWith("image/")) {
+    return true;
+  }
+
+  const extension = path.extname(fileName).toLowerCase();
+  return [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"].includes(extension);
+}
+
+async function storeAttachment(payload: {
+  name: string;
+  mimeType: string;
+  contentBase64: string;
+}): Promise<UploadedAttachment> {
+  const name = sanitizeFileName(payload.name);
+  if (!isImageAttachment(payload.mimeType, name)) {
+    throw new Error("Only image attachments are supported.");
+  }
+  const id = crypto.randomUUID();
+  const filePath = path.join(attachmentsRoot, `${id}-${name}`);
+  const buffer = Buffer.from(payload.contentBase64, "base64");
+
+  await fs.mkdir(attachmentsRoot, { recursive: true });
+  await fs.writeFile(filePath, buffer);
+
+  return {
+    id,
+    name,
+    path: filePath,
+    mimeType: payload.mimeType,
+    size: buffer.byteLength,
+    kind: "image"
+  };
+}
+
 async function readCodexConfig(): Promise<CodexConfigInfo> {
   const content = await fs.readFile(codexConfigPath, "utf8").catch(() => "");
   return {
@@ -194,6 +236,62 @@ async function readSessionModelOverrides() {
 async function writeSessionModelOverrides(overrides: Record<string, string>) {
   await fs.mkdir(path.dirname(sessionModelsPath), { recursive: true });
   await fs.writeFile(sessionModelsPath, JSON.stringify(overrides, null, 2), "utf8");
+}
+
+async function readThreadAttachmentRegistry() {
+  try {
+    const content = await fs.readFile(sessionAttachmentsPath, "utf8");
+    const parsed = JSON.parse(content) as Record<string, Array<{ text: string; attachments: MessageAttachment[] }>>;
+    return parsed;
+  } catch {
+    return {} as Record<string, Array<{ text: string; attachments: MessageAttachment[] }>>;
+  }
+}
+
+async function writeThreadAttachmentRegistry(registry: Record<string, Array<{ text: string; attachments: MessageAttachment[] }>>) {
+  await fs.mkdir(path.dirname(sessionAttachmentsPath), { recursive: true });
+  await fs.writeFile(sessionAttachmentsPath, JSON.stringify(registry, null, 2), "utf8");
+}
+
+async function appendThreadAttachments(threadId: string, text: string, attachments: UploadedAttachment[]) {
+  if (!attachments.length) {
+    return;
+  }
+
+  const registry = await readThreadAttachmentRegistry();
+  const nextEntry = {
+    text,
+    attachments: attachments.map((attachment) => ({
+      ...attachment,
+      url: `/api/attachments/content?path=${encodeURIComponent(attachment.path)}`
+    }))
+  };
+
+  registry[threadId] = [...(registry[threadId] ?? []), nextEntry];
+  await writeThreadAttachmentRegistry(registry);
+}
+
+async function getThreadAttachments(threadId: string) {
+  const registry = await readThreadAttachmentRegistry();
+  return registry[threadId] ?? [];
+}
+
+async function clearThreadAttachments(threadId: string) {
+  const registry = await readThreadAttachmentRegistry();
+  if (!registry[threadId]) {
+    return;
+  }
+  delete registry[threadId];
+  await writeThreadAttachmentRegistry(registry);
+}
+
+function resolveAttachmentPath(input?: string | null) {
+  const raw = input?.trim() || ".";
+  const target = path.resolve(raw.startsWith("/") ? raw : path.join(attachmentsRoot, raw));
+  if (target !== attachmentsRoot && !target.startsWith(`${attachmentsRoot}${path.sep}`)) {
+    throw new Error("Path must stay within attachment storage.");
+  }
+  return target;
 }
 
 async function setSessionModelOverride(threadId: string, model: string | null) {
@@ -345,7 +443,7 @@ async function loadThread(threadId: string) {
   const detail = store.setThread({
     ...response.thread,
     model: await resolveSessionModel(threadId, response.thread.model ?? response.model ?? configuredModel)
-  } as Thread);
+  } as Thread, await getThreadAttachments(threadId));
   await switchWorkspace(detail.summary.cwd);
   return detail;
 }
@@ -722,6 +820,50 @@ app.post("/api/files/archive", async (request, response) => {
   }
 });
 
+app.post("/api/attachments", async (request, response) => {
+  try {
+    const attachments = Array.isArray(request.body?.attachments) ? request.body.attachments : [];
+    if (!attachments.length) {
+      response.status(400).json({ error: "At least one attachment is required." });
+      return;
+    }
+
+    const stored = await Promise.all(
+      attachments.map(async (entry: unknown) => {
+        const payload = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {};
+        const name = typeof payload.name === "string" ? payload.name : "";
+        const mimeType = typeof payload.mimeType === "string" ? payload.mimeType : "application/octet-stream";
+        const contentBase64 = typeof payload.contentBase64 === "string" ? payload.contentBase64 : "";
+
+        if (!name || !contentBase64) {
+          throw new Error("Invalid attachment payload.");
+        }
+
+        return storeAttachment({ name, mimeType, contentBase64 });
+      })
+    );
+
+    response.status(201).json({ attachments: stored });
+  } catch (error) {
+    response.status(400).json({ error: getErrorMessage(error) });
+  }
+});
+
+app.get("/api/attachments/content", async (request, response) => {
+  try {
+    const targetPath = typeof request.query.path === "string" ? request.query.path : "";
+    const absolutePath = resolveAttachmentPath(targetPath);
+    const stats = await fs.stat(absolutePath);
+    if (!stats.isFile()) {
+      response.status(404).json({ error: "Attachment not found." });
+      return;
+    }
+    response.sendFile(absolutePath);
+  } catch (error) {
+    response.status(400).json({ error: getErrorMessage(error) });
+  }
+});
+
 app.post("/api/config", async (request, response) => {
   const content = typeof request.body?.content === "string" ? request.body.content : null;
   const restart = Boolean(request.body?.restart);
@@ -799,9 +941,10 @@ app.post("/api/sessions", async (request, response) => {
 app.post("/api/sessions/:threadId/messages", async (request, response) => {
   const threadId = request.params.threadId;
   const text = typeof request.body?.text === "string" ? request.body.text.trim() : "";
+  const attachments = Array.isArray(request.body?.attachments) ? (request.body.attachments as UploadedAttachment[]) : [];
 
-  if (!text) {
-    response.status(400).json({ error: "Message text is required." });
+  if (!text && !attachments.length) {
+    response.status(400).json({ error: "Message text or attachment is required." });
     return;
   }
 
@@ -810,9 +953,14 @@ app.post("/api/sessions/:threadId/messages", async (request, response) => {
     await loadThread(threadId);
   }
 
+  await appendThreadAttachments(threadId, text, attachments);
+
   await codex.request("turn/start", {
     threadId,
-    input: [{ type: "text", text, text_elements: [] }],
+    input: [
+      ...(text ? [{ type: "text", text, text_elements: [] }] : []),
+      ...attachments.map((attachment) => ({ type: "localImage", path: attachment.path }))
+    ],
     model: existing?.summary.model ?? null
   });
 
@@ -823,7 +971,11 @@ app.post("/api/sessions/:threadId/messages", async (request, response) => {
       kind: "user",
       role: "user",
       title: "You",
-      text,
+      text: [text, ...attachments.map((attachment) => `[Attached: ${attachment.name}]`)].filter(Boolean).join("\n\n"),
+      attachments: attachments.map((attachment) => ({
+        ...attachment,
+        url: `/api/attachments/content?path=${encodeURIComponent(attachment.path)}`
+      })),
       status: "sent"
     });
     current.liveStatus = {
@@ -881,6 +1033,7 @@ app.post("/api/sessions/:threadId/stop", async (request, response) => {
 app.delete("/api/sessions/:threadId", async (request, response) => {
   const threadId = request.params.threadId;
   await setSessionModelOverride(threadId, null);
+  await clearThreadAttachments(threadId);
 
   await codex.request("thread/archive", { threadId });
   store.removeThread(threadId);
