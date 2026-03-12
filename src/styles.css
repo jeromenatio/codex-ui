@@ -311,6 +311,11 @@ pre {
   gap: 8px;
 }
 
+.topbar-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 .topbar-nav {
   display: inline-flex;
   align-items: center;
@@ -340,6 +345,26 @@ pre {
   background: var(--panel-strong);
 }
 
+.theme-picker {
+  position: relative;
+}
+
+.language-picker {
+  position: relative;
+}
+
+.icon-only {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  padding: 0;
+}
+
+.icon-only.is-open {
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--border));
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel-strong));
+}
+
 .theme-switcher select {
   border: 0;
   background: transparent;
@@ -367,6 +392,65 @@ pre {
 
 .ghost-button.danger {
   color: #d14545;
+}
+
+.theme-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(280px, calc(100vw - 24px));
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 92%, white 8%);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(18px);
+}
+
+.language-menu {
+  width: 140px;
+}
+
+.theme-menu-head {
+  margin-bottom: 8px;
+  padding: 2px 4px 8px;
+  font-family: var(--font-display);
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.theme-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.theme-option {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-strong) 88%, transparent);
+  color: var(--text);
+  text-align: left;
+}
+
+.theme-option.active {
+  border-color: color-mix(in srgb, var(--accent) 44%, var(--border));
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent) 20%, var(--panel-strong)),
+    color-mix(in srgb, var(--accent-strong) 14%, var(--panel-strong))
+  );
+}
+
+.theme-option-title {
+  font-size: 0.86rem;
+  font-weight: 600;
 }
 
 .solid-button {
@@ -1362,6 +1446,22 @@ pre {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.quick-prompt-action {
+  flex: 0 0 auto;
+}
+
+.quick-prompt-action-edit {
+  color: #0d7a63;
+  border-color: rgba(13, 122, 99, 0.24);
+  background: rgba(13, 122, 99, 0.08);
+}
+
+.quick-prompt-action-delete {
+  color: #d14545;
+  border-color: rgba(209, 69, 69, 0.24);
+  background: rgba(209, 69, 69, 0.08);
 }
 
 .quick-prompts-editor {

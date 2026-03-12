@@ -28,10 +28,10 @@ import {
   Gauge,
   Image,
   LoaderCircle,
+  Languages,
   MessageSquareMore,
   Palette,
   Plus,
-  RefreshCw,
   SendHorizonal,
   Settings2,
   SquarePen,
@@ -384,8 +384,9 @@ function App() {
   const [isQuickPromptsOpen, setIsQuickPromptsOpen] = useState(false);
   const [isModelOverlayOpen, setIsModelOverlayOpen] = useState(false);
   const [isImageOverlayOpen, setIsImageOverlayOpen] = useState(false);
+  const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
+  const [isLanguageMenuOpen, setIsLanguageMenuOpen] = useState(false);
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [quickPrompts, setQuickPrompts] = useState<QuickPrompt[]>(() => loadQuickPrompts(resolveStoredLanguage()));
   const [editingQuickPromptId, setEditingQuickPromptId] = useState<string | null>(null);
   const [quickPromptTitle, setQuickPromptTitle] = useState("");
@@ -411,6 +412,8 @@ function App() {
   const scrollTimerRef = useRef<number | null>(null);
   const notificationIdRef = useRef(1);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const themeMenuRef = useRef<HTMLDivElement | null>(null);
+  const languageMenuRef = useRef<HTMLDivElement | null>(null);
   const lastScrollStateRef = useRef<{ threadId: string | null; count: number }>({
     threadId: null,
     count: 0
@@ -823,6 +826,36 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem(LANGUAGE_KEY, language);
   }, [language]);
+
+  useEffect(() => {
+    if (!isThemeMenuOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!themeMenuRef.current?.contains(event.target as Node)) {
+        setIsThemeMenuOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handlePointerDown);
+    return () => window.removeEventListener("mousedown", handlePointerDown);
+  }, [isThemeMenuOpen]);
+
+  useEffect(() => {
+    if (!isLanguageMenuOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!languageMenuRef.current?.contains(event.target as Node)) {
+        setIsLanguageMenuOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handlePointerDown);
+    return () => window.removeEventListener("mousedown", handlePointerDown);
+  }, [isLanguageMenuOpen]);
 
   useEffect(() => {
     window.localStorage.setItem(QUICK_PROMPTS_KEY, JSON.stringify(quickPrompts));
@@ -1568,15 +1601,6 @@ function App() {
     }
   }
 
-  async function handleRefresh() {
-    setIsRefreshing(true);
-    try {
-      await bootstrap();
-    } finally {
-      setIsRefreshing(false);
-    }
-  }
-
   function handlePageChange(page: AppPage) {
     const nextPath = pathFromPage(page);
     if (window.location.pathname !== nextPath) {
@@ -1665,52 +1689,93 @@ function App() {
               <FilesIcon size={16} />
               {t("nav.files")}
             </button>
+            <button className="ghost-button nav-button" type="button" onClick={() => setIsSessionsOverlayOpen(true)}>
+              <FolderOpen size={16} />
+              {t("nav.sessions")}
+            </button>
           </div>
 
-          <button className="ghost-button" type="button" onClick={() => void handleOpenConfig()}>
+          <div className="language-picker" ref={languageMenuRef}>
+            <button
+              className={`ghost-button icon-only ${isLanguageMenuOpen ? "is-open" : ""}`}
+              type="button"
+              onClick={() => setIsLanguageMenuOpen((current) => !current)}
+              aria-label={t("language.label")}
+              title={t("language.label")}
+            >
+              <Languages size={17} />
+            </button>
+
+            {isLanguageMenuOpen ? (
+              <div className="theme-menu language-menu">
+                <div className="theme-menu-head">{t("language.label")}</div>
+                <div className="theme-menu-list">
+                  <button
+                    type="button"
+                    className={`theme-option ${language === "en" ? "active" : ""}`}
+                    onClick={() => {
+                      setLanguage("en");
+                      setIsLanguageMenuOpen(false);
+                    }}
+                  >
+                    <span className="theme-option-title">{t("language.en")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`theme-option ${language === "fr" ? "active" : ""}`}
+                    onClick={() => {
+                      setLanguage("fr");
+                      setIsLanguageMenuOpen(false);
+                    }}
+                  >
+                    <span className="theme-option-title">{t("language.fr")}</span>
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="theme-picker" ref={themeMenuRef}>
+            <button
+              className={`ghost-button icon-only ${isThemeMenuOpen ? "is-open" : ""}`}
+              type="button"
+              onClick={() => setIsThemeMenuOpen((current) => !current)}
+              aria-label={t("theme.label")}
+              title={t("theme.label")}
+            >
+              <Palette size={16} />
+            </button>
+
+            {isThemeMenuOpen ? (
+              <div className="theme-menu">
+                <div className="theme-menu-head">{t("theme.label")}</div>
+                <div className="theme-menu-list">
+                  {THEMES.map((entry) => (
+                    <button
+                      key={entry.id}
+                      type="button"
+                      className={`theme-option ${theme === entry.id ? "active" : ""}`}
+                      onClick={() => {
+                        setTheme(entry.id);
+                        setIsThemeMenuOpen(false);
+                      }}
+                    >
+                      <span className="theme-option-title">{t(entry.label)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <button
+            className="ghost-button icon-only"
+            type="button"
+            onClick={() => void handleOpenConfig()}
+            aria-label={t("nav.configs")}
+            title={t("nav.configs")}
+          >
             <Settings2 size={16} />
-            {t("nav.configs")}
-          </button>
-
-          <button className="ghost-button" type="button" onClick={() => setIsSessionsOverlayOpen(true)}>
-            <FolderOpen size={16} />
-            {t("nav.sessions")}
-          </button>
-
-          <label className="theme-switcher">
-            <span>{t("language.label")}</span>
-            <select
-              value={language}
-              onChange={(event) => {
-                setLanguage(event.target.value as Locale);
-                event.target.blur();
-              }}
-            >
-              <option value="fr">{t("language.fr")}</option>
-              <option value="en">{t("language.en")}</option>
-            </select>
-          </label>
-
-          <label className="theme-switcher">
-            <Palette size={16} />
-            <select
-              value={theme}
-              onChange={(event) => {
-                setTheme(event.target.value);
-                event.target.blur();
-              }}
-            >
-              {THEMES.map((entry) => (
-                <option key={entry.id} value={entry.id}>
-                  {t(entry.label)}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <button className="ghost-button" type="button" onClick={() => void handleRefresh()} disabled={isRefreshing}>
-            <RefreshCw size={16} />
-            {isRefreshing ? t("nav.refreshing") : t("nav.refresh")}
           </button>
         </div>
       </nav>
@@ -2281,17 +2346,21 @@ function App() {
                       </button>
                       <button
                         type="button"
-                        className="ghost-button subtle"
+                        className="ghost-button subtle icon-button quick-prompt-action quick-prompt-action-edit"
                         onClick={() => handleEditQuickPrompt(prompt)}
+                        aria-label={t("button.edit")}
+                        title={t("button.edit")}
                       >
-                        {t("button.edit")}
+                        <SquarePen size={15} />
                       </button>
                       <button
                         type="button"
-                        className="ghost-button subtle danger"
+                        className="ghost-button subtle icon-button quick-prompt-action quick-prompt-action-delete"
                         onClick={() => handleDeleteQuickPrompt(prompt.id)}
+                        aria-label={t("button.delete")}
+                        title={t("button.delete")}
                       >
-                        {t("button.delete")}
+                        <Trash2 size={15} />
                       </button>
                     </div>
                   </article>
