@@ -1339,8 +1339,8 @@ pre {
 }
 
 .modal-card-wide {
-  width: min(860px, 100%);
-  max-width: min(860px, calc(100vw - 32px));
+  width: min(1040px, 100%);
+  max-width: min(1040px, calc(100vw - 24px));
 }
 
 .quick-prompts-modal {
@@ -1546,17 +1546,135 @@ pre {
   flex: 0 0 auto;
 }
 
-.config-toolbar {
+.config-modal {
+  max-height: calc(100dvh - 20px);
+}
+
+.config-head-copy {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 10px;
+  flex-wrap: wrap;
 }
 
-.config-editor {
+.config-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  padding-right: 2px;
+  margin-bottom: 12px;
+}
+
+.config-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.config-card {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+}
+
+.config-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.config-field span,
+.config-check span,
+.config-extra span {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.config-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text) !important;
+}
+
+.config-field small,
+.config-check small {
+  font-size: 0.74rem;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.config-field select {
   width: 100%;
-  min-height: min(48dvh, 420px);
-  max-height: calc(100dvh - 220px);
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.config-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 12px;
+}
+
+.config-check-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.config-switch {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-strong) 92%, transparent);
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.config-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: white;
+  box-shadow: 0 1px 3px rgba(12, 18, 28, 0.18);
+  transition: transform 160ms ease;
+}
+
+.config-check input:checked + .config-switch {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+}
+
+.config-check input:checked + .config-switch .config-switch-thumb {
+  transform: translateX(18px);
+}
+
+.config-extra {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.config-extra-editor {
+  width: 100%;
+  min-height: 140px;
+  max-height: 28dvh;
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -1567,6 +1685,14 @@ pre {
   line-height: 1.45;
   resize: vertical;
   overflow: auto;
+}
+
+.config-actions {
+  position: sticky;
+  bottom: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  background: var(--panel-strong);
 }
 
 .activity-list {
@@ -1886,9 +2012,8 @@ pre {
     max-height: calc(100dvh - 104px);
   }
 
-  .config-editor {
-    min-height: 40dvh;
-    max-height: calc(100dvh - 188px);
+  .config-form {
+    grid-template-columns: 1fr;
   }
 
   .quick-prompts-layout {

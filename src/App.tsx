@@ -21,6 +21,7 @@ import {
   Files as FilesIcon,
   FolderOpen,
   Folder,
+  Globe,
   Minimize2,
   MessagesSquare,
   Eraser,
@@ -29,11 +30,14 @@ import {
   Image,
   LoaderCircle,
   Languages,
+  Search,
   MessageSquareMore,
   Palette,
   Plus,
   SendHorizonal,
   Settings2,
+  Shield,
+  ShieldAlert,
   SquarePen,
   Sparkles,
   TriangleAlert,
@@ -127,6 +131,15 @@ type AppNotification = {
 };
 type PendingAttachment = UploadedAttachment & {
   previewUrl: string | null;
+};
+type ConfigFormState = {
+  model: string;
+  approvalPolicy: string;
+  sandboxMode: string;
+  webSearch: string;
+  allowLoginShell: boolean;
+  hideFullAccessWarning: boolean;
+  extraToml: string;
 };
 
 function isImageFile(file: File) {
@@ -321,19 +334,88 @@ function messageIdentityIcon(role: "user" | "assistant" | "system") {
   return null;
 }
 
-function applyPermissiveCodexPreset(content: string) {
-  void content;
-  return `model = "gpt-5.4"
-approval_policy = "never"
-sandbox_mode = "danger-full-access"
-search = true
+function defaultConfigForm(): ConfigFormState {
+  return {
+    model: "gpt-5.4",
+    approvalPolicy: "never",
+    sandboxMode: "danger-full-access",
+    webSearch: "cached",
+    allowLoginShell: true,
+    hideFullAccessWarning: true,
+    extraToml: ""
+  };
+}
 
-[notice]
-hide_full_access_warning = true
+function parseBooleanSetting(content: string, pattern: RegExp, fallback = false) {
+  const match = content.match(pattern);
+  if (!match) {
+    return fallback;
+  }
 
-[notice.model_migrations]
-"gpt-5.3-codex" = "gpt-5.4"
-`;
+  return match[1] === "true";
+}
+
+function parseStringSetting(content: string, pattern: RegExp, fallback = "") {
+  const match = content.match(pattern);
+  return match?.[1] ?? fallback;
+}
+
+function stripKnownConfigSections(content: string) {
+  return content
+    .replace(/^\s*model\s*=\s*"[^"\n]*"\s*$/gm, "")
+    .replace(/^\s*approval_policy\s*=\s*"[^"\n]*"\s*$/gm, "")
+    .replace(/^\s*sandbox_mode\s*=\s*"[^"\n]*"\s*$/gm, "")
+    .replace(/^\s*web_search\s*=\s*"[^"\n]*"\s*$/gm, "")
+    .replace(/^\s*search\s*=\s*(true|false)\s*$/gm, "")
+    .replace(/^\s*allow_login_shell\s*=\s*(true|false)\s*$/gm, "")
+    .replace(/^\s*\[notice\]\s*$/gm, "")
+    .replace(/^\s*hide_full_access_warning\s*=\s*(true|false)\s*$/gm, "")
+    .replace(/^\s*\[notice\.model_migrations\]\s*$/gm, "")
+    .replace(/^\s*"gpt-5\.3-codex"\s*=\s*"gpt-5\.4"\s*$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function parseConfigForm(content: string): ConfigFormState {
+  const defaults = defaultConfigForm();
+
+  return {
+    model: parseStringSetting(content, /^\s*model\s*=\s*"([^"\n]+)"/m, defaults.model),
+    approvalPolicy: parseStringSetting(content, /^\s*approval_policy\s*=\s*"([^"\n]+)"/m, defaults.approvalPolicy),
+    sandboxMode: parseStringSetting(content, /^\s*sandbox_mode\s*=\s*"([^"\n]+)"/m, defaults.sandboxMode),
+    webSearch: parseStringSetting(
+      content,
+      /^\s*web_search\s*=\s*"([^"\n]+)"/m,
+      parseBooleanSetting(content, /^\s*search\s*=\s*(true|false)\s*$/m, false) ? "live" : defaults.webSearch
+    ),
+    allowLoginShell: parseBooleanSetting(content, /^\s*allow_login_shell\s*=\s*(true|false)\s*$/m, defaults.allowLoginShell),
+    hideFullAccessWarning: parseBooleanSetting(
+      content,
+      /^\s*hide_full_access_warning\s*=\s*(true|false)\s*$/m,
+      defaults.hideFullAccessWarning
+    ),
+    extraToml: stripKnownConfigSections(content)
+  };
+}
+
+function buildConfigToml(form: ConfigFormState) {
+  const blocks = [
+    `model = "${form.model.trim() || "gpt-5.4"}"`,
+    `approval_policy = "${form.approvalPolicy}"`,
+    `sandbox_mode = "${form.sandboxMode}"`,
+    `web_search = "${form.webSearch}"`,
+    `allow_login_shell = ${form.allowLoginShell ? "true" : "false"}`,
+    "",
+    "[notice]",
+    `hide_full_access_warning = ${form.hideFullAccessWarning ? "true" : "false"}`
+  ];
+
+  const extra = form.extraToml.trim();
+  if (extra) {
+    blocks.push("", extra);
+  }
+
+  return `${blocks.join("\n").trim()}\n`;
 }
 
 function fileEntryIcon(entry: FileTreeEntry, isOpen: boolean) {
@@ -377,6 +459,7 @@ function App() {
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
   const [account, setAccount] = useState<AccountInfo | null>(null);
   const [configDraft, setConfigDraft] = useState("");
+  const [configForm, setConfigForm] = useState<ConfigFormState>(() => defaultConfigForm());
   const [configPath, setConfigPath] = useState("");
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [isConfigSaving, setIsConfigSaving] = useState(false);
@@ -598,6 +681,7 @@ function App() {
   async function refreshConfig() {
     const data = await fetchJson<{ config: CodexConfigInfo }>("/api/config");
     setConfigDraft(data.config.content);
+    setConfigForm(parseConfigForm(data.config.content));
     setConfigPath(data.config.path);
   }
 
@@ -1538,6 +1622,9 @@ function App() {
 
   async function handleOpenConfig() {
     await refreshConfig();
+    if (!availableModels.length) {
+      void loadAvailableModels();
+    }
     setIsConfigOpen(true);
   }
 
@@ -1580,14 +1667,16 @@ function App() {
   async function handleSaveConfig(restart: boolean) {
     setIsConfigSaving(true);
     try {
+      const nextContent = buildConfigToml(configForm);
       const data = await fetchJson<{ config: CodexConfigInfo }>("/api/config", {
         method: "POST",
         body: JSON.stringify({
-          content: configDraft,
+          content: nextContent,
           restart
         })
       });
       setConfigDraft(data.config.content);
+      setConfigForm(parseConfigForm(data.config.content));
       setConfigPath(data.config.path);
       if (restart) {
         await bootstrap();
@@ -2506,9 +2595,12 @@ function App() {
 
       {isConfigOpen ? (
         <div className="modal-backdrop" onClick={() => setIsConfigOpen(false)}>
-          <section className="modal-card modal-card-wide" onClick={(event) => event.stopPropagation()}>
+          <section className="modal-card modal-card-wide config-modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-head">
-              <h3>{t("modal.config_title")}</h3>
+              <div className="config-head-copy">
+                <h3>{t("modal.config_title")}</h3>
+                <span className="meta-tag">{configPath || "~/.codex/config.toml"}</span>
+              </div>
               <button
                 type="button"
                 className="ghost-button subtle icon-button"
@@ -2519,28 +2611,134 @@ function App() {
               </button>
             </div>
 
-            <p className="modal-copy">
-              {configPath || "~/.codex/config.toml"}
-            </p>
+            <div className="config-body">
+            <div className="config-form">
+              <label className="config-field config-card">
+                <span className="config-label">
+                  <Bot size={15} />
+                  {t("config.model")}
+                </span>
+                <small>{t("config.model_help")}</small>
+                <select
+                  value={configForm.model}
+                  onChange={(event) => setConfigForm((current) => ({ ...current, model: event.target.value }))}
+                >
+                  {availableModels.length ? (
+                    availableModels.map((entry) => (
+                      <option key={entry.id} value={entry.model}>
+                        {entry.displayName}
+                      </option>
+                    ))
+                  ) : (
+                    <option value={configForm.model}>{configForm.model}</option>
+                  )}
+                </select>
+              </label>
 
-            <div className="config-toolbar">
-              <button
-                type="button"
-                className="ghost-button subtle"
-                onClick={() => setConfigDraft((current) => applyPermissiveCodexPreset(current))}
-              >
-                {t("button.apply_full_access")}
-              </button>
+              <label className="config-field config-card">
+                <span className="config-label">
+                  <ShieldAlert size={15} />
+                  {t("config.approval_policy")}
+                </span>
+                <small>{t("config.approval_policy_help")}</small>
+                <select
+                  value={configForm.approvalPolicy}
+                  onChange={(event) => setConfigForm((current) => ({ ...current, approvalPolicy: event.target.value }))}
+                >
+                  <option value="untrusted">untrusted</option>
+                  <option value="on-request">on-request</option>
+                  <option value="never">never</option>
+                </select>
+              </label>
+
+              <label className="config-field config-card">
+                <span className="config-label">
+                  <Shield size={15} />
+                  {t("config.sandbox_mode")}
+                </span>
+                <small>{t("config.sandbox_mode_help")}</small>
+                <select
+                  value={configForm.sandboxMode}
+                  onChange={(event) => setConfigForm((current) => ({ ...current, sandboxMode: event.target.value }))}
+                >
+                  <option value="danger-full-access">danger-full-access</option>
+                  <option value="workspace-write">workspace-write</option>
+                  <option value="read-only">read-only</option>
+                </select>
+              </label>
+
+              <label className="config-field config-card">
+                <span className="config-label">
+                  <Search size={15} />
+                  {t("config.web_search")}
+                </span>
+                <small>{t("config.web_search_help")}</small>
+                <select
+                  value={configForm.webSearch}
+                  onChange={(event) => setConfigForm((current) => ({ ...current, webSearch: event.target.value }))}
+                >
+                  <option value="disabled">disabled</option>
+                  <option value="cached">cached</option>
+                  <option value="live">live</option>
+                </select>
+              </label>
+
+              <label className="config-check config-card">
+                <input
+                  type="checkbox"
+                  className="visually-hidden"
+                  checked={configForm.allowLoginShell}
+                  onChange={(event) => setConfigForm((current) => ({ ...current, allowLoginShell: event.target.checked }))}
+                />
+                <span className="config-switch" aria-hidden="true">
+                  <span className="config-switch-thumb" />
+                </span>
+                <span className="config-check-copy">
+                  <span className="config-label">
+                    <Globe size={15} />
+                    {t("config.allow_login_shell")}
+                  </span>
+                  <small>{t("config.allow_login_shell_help")}</small>
+                </span>
+              </label>
+
+              <label className="config-check config-card">
+                <input
+                  type="checkbox"
+                  className="visually-hidden"
+                  checked={configForm.hideFullAccessWarning}
+                  onChange={(event) =>
+                    setConfigForm((current) => ({ ...current, hideFullAccessWarning: event.target.checked }))
+                  }
+                />
+                <span className="config-switch" aria-hidden="true">
+                  <span className="config-switch-thumb" />
+                </span>
+                <span className="config-check-copy">
+                  <span className="config-label">
+                    <TriangleAlert size={15} />
+                    {t("config.hide_warning")}
+                  </span>
+                  <small>{t("config.hide_warning_help")}</small>
+                </span>
+              </label>
+
+              <div className="config-extra config-card">
+                <span className="config-label">
+                  <FileCode2 size={15} />
+                  {t("config.extra_toml")}
+                </span>
+                <textarea
+                  className="config-extra-editor"
+                  value={configForm.extraToml}
+                  onChange={(event) => setConfigForm((current) => ({ ...current, extraToml: event.target.value }))}
+                  spellCheck={false}
+                />
+              </div>
+            </div>
             </div>
 
-            <textarea
-              className="config-editor"
-              value={configDraft}
-              onChange={(event) => setConfigDraft(event.target.value)}
-              spellCheck={false}
-            />
-
-            <div className="modal-actions">
+            <div className="modal-actions config-actions">
               <button
                 type="button"
                 className="ghost-button subtle"
