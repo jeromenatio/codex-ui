@@ -1080,6 +1080,11 @@ pre {
   max-width: min(860px, calc(100vw - 32px));
 }
 
+.quick-prompts-modal {
+  width: min(980px, 100%);
+  max-width: min(980px, calc(100vw - 32px));
+}
+
 .modal-head,
 .modal-actions {
   display: flex;
@@ -1123,6 +1128,89 @@ pre {
 .archive-checkbox span {
   font-size: 0.82rem;
   color: var(--text);
+}
+
+.quick-prompts-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.9fr);
+  gap: 12px;
+  min-height: 0;
+}
+
+.quick-prompts-list,
+.quick-prompts-editor {
+  min-height: 0;
+}
+
+.quick-prompts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: calc(100dvh - 210px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.quick-prompt-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+}
+
+.quick-prompt-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.quick-prompt-copy strong {
+  font-size: 0.88rem;
+}
+
+.quick-prompt-copy span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.quick-prompt-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.quick-prompts-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+}
+
+.quick-prompts-editor input {
+  margin-bottom: 0;
+}
+
+.quick-prompt-textarea {
+  width: 100%;
+  min-height: 220px;
+  max-height: calc(100dvh - 290px);
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  color: var(--text);
+  font-size: 0.86rem;
+  line-height: 1.45;
+  resize: vertical;
 }
 
 .config-toolbar {
@@ -1468,5 +1556,18 @@ pre {
   .config-editor {
     min-height: 40dvh;
     max-height: calc(100dvh - 188px);
+  }
+
+  .quick-prompts-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .quick-prompts-list {
+    max-height: 34dvh;
+  }
+
+  .quick-prompt-textarea {
+    min-height: 28dvh;
+    max-height: 36dvh;
   }
 }

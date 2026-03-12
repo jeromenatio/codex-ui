@@ -4,6 +4,8 @@ import remarkGfm from "remark-gfm";
 import {
   Activity,
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   BadgeCheck,
   Bot,
   ChevronDown,
@@ -85,6 +87,7 @@ const THEMES: Theme[] = [
 
 const THREAD_KEY = "codex-ui-current-thread";
 const THEME_KEY = "codex-ui-theme";
+const QUICK_PROMPTS_KEY = "codex-ui-quick-prompts";
 const DEFAULT_THEME = "paper";
 
 type AppPage = "chat" | "files";
@@ -109,6 +112,17 @@ type AppNotification = {
   kind: NotificationKind;
   message: string;
 };
+type QuickPrompt = {
+  id: string;
+  title: string;
+  content: string;
+};
+
+const DEFAULT_QUICK_PROMPTS: QuickPrompt[] = [
+  { id: "commit-push", title: "Commit et push", content: "Commit et push stp" },
+  { id: "restart-server", title: "Relance le serveur", content: "Relance le serveur stp" },
+  { id: "build-check", title: "Build", content: "Lance un build et dis-moi s'il y a des erreurs" }
+];
 
 function notificationIcon(kind: NotificationKind) {
   switch (kind) {
@@ -134,6 +148,34 @@ function pathFromPage(page: AppPage) {
 
 function resolveTheme(themeId: string | null) {
   return THEMES.some((theme) => theme.id === themeId) ? themeId! : DEFAULT_THEME;
+}
+
+function loadQuickPrompts() {
+  try {
+    const raw = window.localStorage.getItem(QUICK_PROMPTS_KEY);
+    if (!raw) {
+      return DEFAULT_QUICK_PROMPTS;
+    }
+
+    const parsed = JSON.parse(raw) as QuickPrompt[];
+    if (!Array.isArray(parsed)) {
+      return DEFAULT_QUICK_PROMPTS;
+    }
+
+    const valid = parsed.filter(
+      (entry) =>
+        entry &&
+        typeof entry.id === "string" &&
+        typeof entry.title === "string" &&
+        typeof entry.content === "string" &&
+        entry.title.trim() &&
+        entry.content.trim()
+    );
+
+    return valid.length ? valid : DEFAULT_QUICK_PROMPTS;
+  } catch {
+    return DEFAULT_QUICK_PROMPTS;
+  }
 }
 
 function parentDirectory(filePath: string) {
@@ -294,8 +336,13 @@ function App() {
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [isConfigSaving, setIsConfigSaving] = useState(false);
   const [isSessionsOverlayOpen, setIsSessionsOverlayOpen] = useState(false);
+  const [isQuickPromptsOpen, setIsQuickPromptsOpen] = useState(false);
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [quickPrompts, setQuickPrompts] = useState<QuickPrompt[]>(() => loadQuickPrompts());
+  const [editingQuickPromptId, setEditingQuickPromptId] = useState<string | null>(null);
+  const [quickPromptTitle, setQuickPromptTitle] = useState("");
+  const [quickPromptContent, setQuickPromptContent] = useState("");
   const [fileTree, setFileTree] = useState<Record<string, FileTreeEntry[]>>({});
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
   const [loadingFolders, setLoadingFolders] = useState<Record<string, boolean>>({});
@@ -540,6 +587,10 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
+    window.localStorage.setItem(QUICK_PROMPTS_KEY, JSON.stringify(quickPrompts));
+  }, [quickPrompts]);
+
+  useEffect(() => {
     if (activePage !== "files" || fileTree[""]) {
       return;
     }
@@ -690,14 +741,15 @@ function App() {
     }
   }
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (!currentThread || !message.trim()) {
+  async function submitMessageText(submitted: string) {
+    if (!currentThread || !submitted.trim()) {
+      if (!currentThread) {
+        notifyWarning("Select a session before sending a quick prompt.");
+      }
       return;
     }
 
-    const submitted = message.trim();
+    const nextMessage = submitted.trim();
     setMessage("");
     setIsPosting(true);
 
@@ -712,7 +764,7 @@ function App() {
                 kind: "user",
                 role: "user",
                 title: "You",
-                text: submitted,
+                text: nextMessage,
                 status: "queued"
               }
             ],
@@ -729,17 +781,22 @@ function App() {
     try {
       await fetchJson(`/api/sessions/${currentThread.summary.id}/messages`, {
         method: "POST",
-        body: JSON.stringify({ text: submitted })
+        body: JSON.stringify({ text: nextMessage })
       });
       await refreshSessions();
       setError(null);
     } catch (nextError) {
-      setMessage(submitted);
+      setMessage(nextMessage);
       setError(nextError instanceof Error ? nextError.message : "Unable to send the message.");
       await loadThread(currentThread.summary.id, { preserveError: true });
     } finally {
       setIsPosting(false);
     }
+  }
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await submitMessageText(message);
   }
 
   async function handleStop() {
@@ -774,6 +831,75 @@ function App() {
   function handleClear() {
     setMessage("");
     setError(null);
+  }
+
+  function resetQuickPromptEditor() {
+    setEditingQuickPromptId(null);
+    setQuickPromptTitle("");
+    setQuickPromptContent("");
+  }
+
+  function handleEditQuickPrompt(prompt: QuickPrompt) {
+    setEditingQuickPromptId(prompt.id);
+    setQuickPromptTitle(prompt.title);
+    setQuickPromptContent(prompt.content);
+  }
+
+  function handleSaveQuickPrompt() {
+    const title = quickPromptTitle.trim();
+    const content = quickPromptContent.trim();
+
+    if (!title || !content) {
+      notifyWarning("A quick prompt needs a title and a message.");
+      return;
+    }
+
+    if (editingQuickPromptId) {
+      setQuickPrompts((previous) =>
+        previous.map((entry) => (entry.id === editingQuickPromptId ? { ...entry, title, content } : entry))
+      );
+      notifySuccess("Quick prompt updated.");
+    } else {
+      setQuickPrompts((previous) => [...previous, { id: `prompt-${Date.now()}`, title, content }]);
+      notifySuccess("Quick prompt created.");
+    }
+
+    resetQuickPromptEditor();
+  }
+
+  function handleDeleteQuickPrompt(promptId: string) {
+    setQuickPrompts((previous) => previous.filter((entry) => entry.id !== promptId));
+    if (editingQuickPromptId === promptId) {
+      resetQuickPromptEditor();
+    }
+    notifyInfo("Quick prompt removed.");
+  }
+
+  function handleMoveQuickPrompt(promptId: string, direction: -1 | 1) {
+    setQuickPrompts((previous) => {
+      const currentIndex = previous.findIndex((entry) => entry.id === promptId);
+      const nextIndex = currentIndex + direction;
+
+      if (currentIndex < 0 || nextIndex < 0 || nextIndex >= previous.length) {
+        return previous;
+      }
+
+      const next = [...previous];
+      const [item] = next.splice(currentIndex, 1);
+      next.splice(nextIndex, 0, item);
+      return next;
+    });
+  }
+
+  function handleInsertQuickPrompt(content: string) {
+    setMessage((current) => (current.trim() ? `${current.trim()}\n\n${content}` : content));
+    setIsQuickPromptsOpen(false);
+    notifyInfo("Quick prompt inserted into the composer.");
+  }
+
+  async function handleSendQuickPrompt(content: string) {
+    setIsQuickPromptsOpen(false);
+    await submitMessageText(content);
   }
 
   async function handleCopyMessage(messageId: string, text: string) {
@@ -1286,6 +1412,14 @@ function App() {
                   <SquarePen size={15} />
                   <h2>Composer</h2>
                 </div>
+                <button
+                  type="button"
+                  className="ghost-button subtle"
+                  onClick={() => setIsQuickPromptsOpen(true)}
+                >
+                  <MessageSquareMore size={15} />
+                  Quick prompts
+                </button>
               </div>
 
               <form className="composer" onSubmit={handleSubmit}>
@@ -1501,6 +1635,135 @@ function App() {
               </button>
             </article>
           ))}
+        </div>
+      ) : null}
+
+      {isQuickPromptsOpen ? (
+        <div
+          className="modal-backdrop"
+          onClick={() => {
+            setIsQuickPromptsOpen(false);
+            resetQuickPromptEditor();
+          }}
+        >
+          <section className="modal-card modal-card-wide quick-prompts-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <h3>Quick prompts</h3>
+              <button
+                type="button"
+                className="ghost-button subtle icon-button"
+                onClick={() => {
+                  setIsQuickPromptsOpen(false);
+                  resetQuickPromptEditor();
+                }}
+                aria-label="Close modal"
+              >
+                <CircleX size={16} />
+              </button>
+            </div>
+
+            <p className="modal-copy">
+              Create reusable messages, insert them into the composer, or send them immediately.
+            </p>
+
+            <div className="quick-prompts-layout">
+              <div className="quick-prompts-list">
+                {quickPrompts.map((prompt, index) => (
+                  <article key={prompt.id} className="quick-prompt-row">
+                    <div className="quick-prompt-copy">
+                      <strong>{prompt.title}</strong>
+                      <span>{prompt.content}</span>
+                    </div>
+
+                    <div className="quick-prompt-toolbar">
+                      <button
+                        type="button"
+                        className="ghost-button subtle icon-button"
+                        onClick={() => handleMoveQuickPrompt(prompt.id, -1)}
+                        disabled={index === 0}
+                        aria-label={`Move ${prompt.title} up`}
+                      >
+                        <ArrowUp size={15} />
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-button subtle icon-button"
+                        onClick={() => handleMoveQuickPrompt(prompt.id, 1)}
+                        disabled={index === quickPrompts.length - 1}
+                        aria-label={`Move ${prompt.title} down`}
+                      >
+                        <ArrowDown size={15} />
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-button subtle"
+                        onClick={() => handleInsertQuickPrompt(prompt.content)}
+                      >
+                        Insert
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-button subtle"
+                        onClick={() => void handleSendQuickPrompt(prompt.content)}
+                        disabled={!currentThread || isPosting}
+                      >
+                        Send now
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-button subtle"
+                        onClick={() => handleEditQuickPrompt(prompt)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-button subtle danger"
+                        onClick={() => handleDeleteQuickPrompt(prompt.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </article>
+                ))}
+
+                {!quickPrompts.length ? (
+                  <div className="empty-state compact-empty">
+                    <p>No quick prompts yet.</p>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="quick-prompts-editor">
+                <div className="section-head section-head-compact tight">
+                  <div className="panel-title">
+                    <Sparkles size={15} />
+                    <h2>{editingQuickPromptId ? "Edit prompt" : "New prompt"}</h2>
+                  </div>
+                </div>
+
+                <input
+                  value={quickPromptTitle}
+                  onChange={(event) => setQuickPromptTitle(event.target.value)}
+                  placeholder="Title"
+                />
+                <textarea
+                  className="quick-prompt-textarea"
+                  value={quickPromptContent}
+                  onChange={(event) => setQuickPromptContent(event.target.value)}
+                  placeholder="Message content"
+                />
+                <div className="modal-actions">
+                  <button type="button" className="ghost-button subtle" onClick={resetQuickPromptEditor}>
+                    Clear
+                  </button>
+                  <button type="button" className="solid-button" onClick={handleSaveQuickPrompt}>
+                    {editingQuickPromptId ? "Save changes" : "Add prompt"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
         </div>
       ) : null}
 
