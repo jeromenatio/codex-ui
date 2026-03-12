@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -142,6 +142,7 @@ type ConfigFormState = {
   hideFullAccessWarning: boolean;
   extraToml: string;
 };
+type Translator = (key: string, params?: Record<string, string | number>) => string;
 
 function isImageFile(file: File) {
   if (file.type.startsWith("image/")) {
@@ -335,6 +336,48 @@ function messageIdentityIcon(role: "user" | "assistant" | "system") {
   return null;
 }
 
+function localizeKnownUiText(text: string, translator: Translator) {
+  const known: Record<string, string> = {
+    Ready: "status.ready",
+    "Prêt": "status.ready",
+    "Select or create a session.": "status.select_session",
+    "Sélectionne ou crée une session.": "status.select_session",
+    Queued: "status.queued",
+    "En file": "status.queued",
+    "Message sent to Codex.": "status.message_sent",
+    "Message envoyé à Codex.": "status.message_sent",
+    Stopping: "status.stopping",
+    "Arrêt en cours": "status.stopping",
+    "Interrupt requested.": "status.interrupt_requested",
+    "Interruption demandée.": "status.interrupt_requested",
+    You: "message.you",
+    Vous: "message.you"
+  };
+
+  const key = known[text];
+  return key ? translator(key) : text;
+}
+
+function extractCodeText(children: ReactNode): string {
+  if (typeof children === "string") {
+    return children.replace(/\n$/, "");
+  }
+
+  if (typeof children === "number") {
+    return String(children);
+  }
+
+  if (Array.isArray(children)) {
+    return children.map(extractCodeText).join("").replace(/\n$/, "");
+  }
+
+  if (children && typeof children === "object" && "props" in children) {
+    return extractCodeText((children as { props?: { children?: ReactNode } }).props?.children);
+  }
+
+  return "";
+}
+
 function defaultConfigForm(): ConfigFormState {
   return {
     model: "gpt-5.4",
@@ -439,6 +482,242 @@ function fileEntryIcon(entry: FileTreeEntry, isOpen: boolean) {
   return <File size={15} />;
 }
 
+type ConversationPaneProps = {
+  activityByAnchorMessageId: Record<string, SessionDetail["messages"]>;
+  conversationMessages: SessionDetail["messages"];
+  copiedCodeId: string | null;
+  copiedMessageId: string | null;
+  currentThread: SessionDetail | null;
+  expandedMessages: Record<string, boolean>;
+  isLoading: boolean;
+  onCopyCode: (codeId: string, text: string) => void | Promise<void>;
+  onCopyMessage: (messageId: string, text: string) => void | Promise<void>;
+  onToggleExpanded: (messageId: string) => void;
+  scrollRef: RefObject<HTMLDivElement | null>;
+  t: Translator;
+};
+
+const ConversationPane = memo(function ConversationPane({
+  activityByAnchorMessageId,
+  conversationMessages,
+  copiedCodeId,
+  copiedMessageId,
+  currentThread,
+  expandedMessages,
+  isLoading,
+  onCopyCode,
+  onCopyMessage,
+  onToggleExpanded,
+  scrollRef,
+  t
+}: ConversationPaneProps) {
+  function renderMarkdown(text: string) {
+    return (
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          pre(props) {
+            const { children } = props as { children?: ReactNode };
+            const firstChild = Array.isArray(children) ? children[0] : children;
+            const className =
+              firstChild && typeof firstChild === "object" && "props" in firstChild
+                ? ((firstChild as { props?: { className?: string } }).props?.className ?? "")
+                : "";
+            const codeText = extractCodeText(children);
+            const language = className.replace("language-", "") || "";
+            const codeId = `${language}:${codeText.slice(0, 80)}`;
+
+            return (
+              <div className="code-block">
+                <div className="code-block-toolbar">
+                  <span>{language || t("label.code")}</span>
+                  <button
+                    type="button"
+                    className="message-icon-button"
+                    onClick={() => onCopyCode(codeId, codeText)}
+                    aria-label={t("aria.copy_code_block")}
+                    title={copiedCodeId === codeId ? t("button.copied") : t("aria.copy_code")}
+                  >
+                    <Copy size={14} />
+                  </button>
+                </div>
+                <pre>{children}</pre>
+              </div>
+            );
+          },
+          code(props) {
+            const { className, children, ...rest } = props as {
+              className?: string;
+              children?: ReactNode;
+            };
+
+            return (
+              <code className={className} {...rest}>
+                {children}
+              </code>
+            );
+          }
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+    );
+  }
+
+  function renderMessageAttachments(attachments: MessageAttachment[] | undefined) {
+    if (!attachments?.length) {
+      return null;
+    }
+
+    return (
+      <div className="conversation-attachments">
+        {attachments.map((attachment) => (
+          <article key={attachment.id} className="conversation-attachment">
+            <img src={attachment.url} alt={attachment.name} className="conversation-attachment-image" />
+
+            <div className="conversation-attachment-copy">
+              <strong>{attachment.name}</strong>
+              <span>{attachment.mimeType || t("label.image")}</span>
+            </div>
+
+            <a className="ghost-button subtle" href={attachment.url} target="_blank" rel="noreferrer">
+              {t("button.open")}
+            </a>
+          </article>
+        ))}
+      </div>
+    );
+  }
+
+  function renderInlineActivity(anchorMessageId: string) {
+    const activities = activityByAnchorMessageId[anchorMessageId] ?? [];
+    if (!activities.length) {
+      return null;
+    }
+
+    const isExpanded = Boolean(expandedMessages[`activity:${anchorMessageId}`]);
+
+    return (
+      <div className="inline-activity">
+        <button
+          type="button"
+          className="ghost-button subtle inline-activity-toggle"
+          onClick={() => onToggleExpanded(`activity:${anchorMessageId}`)}
+        >
+          <Activity size={15} />
+          {t("button.activity")}
+          <span className="meta-tag">{t("label.activity_count", { count: activities.length })}</span>
+        </button>
+
+        {isExpanded ? (
+          <div className="activity-list inline-activity-list">
+            {activities.map((entry) => (
+              <article key={entry.id} className="activity-card">
+                <div className="message-head">
+                  <strong>{localizeKnownUiText(entry.title, t)}</strong>
+                  <div className="message-toolbar">
+                    {isExpandable(entry.text) ? (
+                      <button
+                        type="button"
+                        className="message-icon-button"
+                        onClick={() => onToggleExpanded(entry.id)}
+                        aria-label={expandedMessages[entry.id] ? t("aria.collapse_activity") : t("aria.expand_activity")}
+                      >
+                        {expandedMessages[entry.id] ? <Minimize2 size={14} /> : <Expand size={14} />}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="message-icon-button"
+                      onClick={() => onCopyMessage(entry.id, entry.text)}
+                      aria-label={t("aria.copy_activity")}
+                    >
+                      <Copy size={14} />
+                    </button>
+                    {entry.status ? <span>{entry.status}</span> : null}
+                  </div>
+                </div>
+                <div className={`markdown-message ${expandedMessages[entry.id] ? "expanded" : ""}`}>
+                  {renderMarkdown(entry.text)}
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <section className="conversation-column">
+      <div className="section-head section-head-compact tight">
+        <div className="panel-title">
+          <MessagesSquare size={15} />
+          <h2>{t("section.conversation")}</h2>
+        </div>
+      </div>
+
+      <div className="conversation-panel" ref={scrollRef}>
+        {isLoading ? (
+          <div className="empty-state">
+            <LoaderCircle size={18} className="spin" />
+            <p>{t("empty.loading_sessions")}</p>
+          </div>
+        ) : currentThread ? (
+          conversationMessages.length ? (
+            conversationMessages.map((entry) => (
+              <article key={entry.id} className={`message-card message-${entry.role} message-kind-${entry.kind}`}>
+                <div className="message-head">
+                  <strong className="message-title">
+                    {messageIdentityIcon(entry.role)}
+                    <span>{localizeKnownUiText(entry.title, t)}</span>
+                  </strong>
+                  <div className="message-toolbar">
+                    {isExpandable(entry.text) ? (
+                      <button
+                        type="button"
+                        className="message-icon-button"
+                        onClick={() => onToggleExpanded(entry.id)}
+                        aria-label={expandedMessages[entry.id] ? t("aria.collapse_message") : t("aria.expand_message")}
+                      >
+                        {expandedMessages[entry.id] ? <Minimize2 size={14} /> : <Expand size={14} />}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="message-icon-button"
+                      onClick={() => onCopyMessage(entry.id, entry.text)}
+                      aria-label={t("aria.copy_message")}
+                      title={copiedMessageId === entry.id ? t("button.copied") : t("button.copy")}
+                    >
+                      <Copy size={14} />
+                    </button>
+                  </div>
+                </div>
+                <div className={`markdown-message ${expandedMessages[entry.id] ? "expanded" : ""}`}>
+                  {renderMarkdown(entry.text)}
+                </div>
+                {renderMessageAttachments(entry.attachments)}
+                {entry.role === "assistant" && entry.phase !== "commentary" ? renderInlineActivity(entry.id) : null}
+              </article>
+            ))
+          ) : (
+            <div className="empty-state">
+              <MessageSquareMore size={22} />
+              <p>{t("empty.no_messages")}</p>
+            </div>
+          )
+        ) : (
+          <div className="empty-state">
+            <Plus size={22} />
+            <p>{t("empty.no_session")}</p>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+});
+
 function App() {
   const [activePage, setActivePage] = useState<AppPage>(() => pageFromPathname(window.location.pathname));
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -518,7 +797,7 @@ function App() {
       ) ?? [],
     [currentThread?.messages]
   );
-  const t = (key: string, params?: Record<string, string | number>) => translate(language, key, params);
+  const t = useCallback<Translator>((key, params) => translate(language, key, params), [language]);
   const localizedLiveStatusLabel = currentThread?.liveStatus.label
     ? localizeKnownUiText(currentThread.liveStatus.label, t)
     : t("status.ready");
@@ -526,61 +805,39 @@ function App() {
     ? localizeKnownUiText(currentThread.liveStatus.detail, t)
     : t("status.select_session");
 
-  function notify(kind: NotificationKind, message: string) {
+  const notify = useCallback((kind: NotificationKind, message: string) => {
     const id = notificationIdRef.current++;
     setNotifications((previous) => [...previous, { id, kind, message }]);
     window.setTimeout(() => {
       setNotifications((previous) => previous.filter((entry) => entry.id !== id));
     }, 4200);
-  }
+  }, []);
 
-  function notifyError(message: string) {
+  const notifyError = useCallback((message: string) => {
     notify("error", message);
-  }
+  }, [notify]);
 
-  function notifyWarning(message: string) {
+  const notifyWarning = useCallback((message: string) => {
     notify("warning", message);
-  }
+  }, [notify]);
 
-  function notifyInfo(message: string) {
+  const notifyInfo = useCallback((message: string) => {
     notify("info", message);
-  }
+  }, [notify]);
 
-  function notifySuccess(message: string) {
+  const notifySuccess = useCallback((message: string) => {
     notify("success", message);
-  }
+  }, [notify]);
 
-  function dismissNotification(notificationId: number) {
+  const dismissNotification = useCallback((notificationId: number) => {
     setNotifications((previous) => previous.filter((entry) => entry.id !== notificationId));
-  }
+  }, []);
 
-  function setError(nextError: string | null) {
+  const setError = useCallback((nextError: string | null) => {
     if (nextError) {
       notifyError(nextError);
     }
-  }
-
-  function localizeKnownUiText(text: string, translator: typeof t) {
-    const known: Record<string, string> = {
-      Ready: "status.ready",
-      "Prêt": "status.ready",
-      "Select or create a session.": "status.select_session",
-      "Sélectionne ou crée une session.": "status.select_session",
-      Queued: "status.queued",
-      "En file": "status.queued",
-      "Message sent to Codex.": "status.message_sent",
-      "Message envoyé à Codex.": "status.message_sent",
-      Stopping: "status.stopping",
-      "Arrêt en cours": "status.stopping",
-      "Interrupt requested.": "status.interrupt_requested",
-      "Interruption demandée.": "status.interrupt_requested",
-      You: "message.you",
-      Vous: "message.you"
-    };
-
-    const key = known[text];
-    return key ? translator(key) : text;
-  }
+  }, [notifyError]);
 
   function messageTurnId(message: SessionDetail["messages"][number]) {
     const turnId = message.meta?.turnId;
@@ -666,6 +923,7 @@ function App() {
 
     return grouped;
   }, [currentThread]);
+
 
   async function refreshSessions() {
     const data = await fetchJson<{ sessions: SessionSummary[] }>("/api/sessions");
@@ -1316,7 +1574,7 @@ function App() {
     await submitMessageText(content);
   }
 
-  async function handleCopyMessage(messageId: string, text: string) {
+  const handleCopyMessage = useCallback(async (messageId: string, text: string) => {
     try {
       await navigator.clipboard.writeText(text);
       setCopiedMessageId(messageId);
@@ -1327,29 +1585,9 @@ function App() {
     } catch {
       setError(t("error.copy_message"));
     }
-  }
+  }, [notifySuccess, setError, t]);
 
-  function extractCodeText(children: ReactNode): string {
-    if (typeof children === "string") {
-      return children.replace(/\n$/, "");
-    }
-
-    if (typeof children === "number") {
-      return String(children);
-    }
-
-    if (Array.isArray(children)) {
-      return children.map(extractCodeText).join("").replace(/\n$/, "");
-    }
-
-    if (children && typeof children === "object" && "props" in children) {
-      return extractCodeText((children as { props?: { children?: ReactNode } }).props?.children);
-    }
-
-    return "";
-  }
-
-  async function handleCopyCode(codeId: string, text: string) {
+  const handleCopyCode = useCallback(async (codeId: string, text: string) => {
     try {
       await navigator.clipboard.writeText(text);
       setCopiedCodeId(codeId);
@@ -1360,7 +1598,7 @@ function App() {
     } catch {
       setError(t("error.copy_code"));
     }
-  }
+  }, [notifySuccess, setError, t]);
 
   async function handleCopySelectedFile() {
     if (!selectedFilePath || !selectedFileContent) {
@@ -1426,65 +1664,12 @@ function App() {
     }
   }
 
-  function renderMarkdown(text: string) {
-    return (
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          pre(props) {
-            const { children } = props as { children?: ReactNode };
-            const firstChild = Array.isArray(children) ? children[0] : children;
-            const className =
-              firstChild && typeof firstChild === "object" && "props" in firstChild
-                ? ((firstChild as { props?: { className?: string } }).props?.className ?? "")
-                : "";
-            const codeText = extractCodeText(children);
-            const language = className.replace("language-", "") || "";
-            const codeId = `${language}:${codeText.slice(0, 80)}`;
-
-            return (
-              <div className="code-block">
-                <div className="code-block-toolbar">
-                  <span>{language || t("label.code")}</span>
-                  <button
-                    type="button"
-                    className="message-icon-button"
-                    onClick={() => void handleCopyCode(codeId, codeText)}
-                    aria-label={t("aria.copy_code_block")}
-                    title={copiedCodeId === codeId ? t("button.copied") : t("aria.copy_code")}
-                  >
-                    <Copy size={14} />
-                  </button>
-                </div>
-                <pre>{children}</pre>
-              </div>
-            );
-          },
-          code(props) {
-            const { className, children, ...rest } = props as {
-              className?: string;
-              children?: ReactNode;
-            };
-
-            return (
-              <code className={className} {...rest}>
-                {children}
-              </code>
-            );
-          }
-        }}
-      >
-        {text}
-      </ReactMarkdown>
-    );
-  }
-
-  function toggleMessageExpanded(messageId: string) {
+  const toggleMessageExpanded = useCallback((messageId: string) => {
     setExpandedMessages((previous) => ({
       ...previous,
       [messageId]: !previous[messageId]
     }));
-  }
+  }, []);
 
   function renderFileTree(folderPath = "", level = 0): ReactNode {
     const entries = fileTree[folderPath] ?? [];
@@ -1539,95 +1724,6 @@ function App() {
         </div>
       );
     });
-  }
-
-  function renderMessageAttachments(attachments: MessageAttachment[] | undefined) {
-    if (!attachments?.length) {
-      return null;
-    }
-
-    return (
-      <div className="conversation-attachments">
-        {attachments.map((attachment) => (
-          <article key={attachment.id} className="conversation-attachment">
-            <img src={attachment.url} alt={attachment.name} className="conversation-attachment-image" />
-
-            <div className="conversation-attachment-copy">
-              <strong>{attachment.name}</strong>
-              <span>{attachment.mimeType || t("label.image")}</span>
-            </div>
-
-            <a
-              className="ghost-button subtle"
-              href={attachment.url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {t("button.open")}
-            </a>
-          </article>
-        ))}
-      </div>
-    );
-  }
-
-  function renderInlineActivity(anchorMessageId: string) {
-    const activities = activityByAnchorMessageId[anchorMessageId] ?? [];
-    if (!activities.length) {
-      return null;
-    }
-
-    const isExpanded = Boolean(expandedMessages[`activity:${anchorMessageId}`]);
-
-    return (
-      <div className="inline-activity">
-        <button
-          type="button"
-          className="ghost-button subtle inline-activity-toggle"
-          onClick={() => toggleMessageExpanded(`activity:${anchorMessageId}`)}
-        >
-          <Activity size={15} />
-          {t("button.activity")}
-          <span className="meta-tag">{t("label.activity_count", { count: activities.length })}</span>
-        </button>
-
-        {isExpanded ? (
-          <div className="activity-list inline-activity-list">
-            {activities.map((entry) => (
-              <article key={entry.id} className="activity-card">
-                <div className="message-head">
-                  <strong>{localizeKnownUiText(entry.title, t)}</strong>
-                  <div className="message-toolbar">
-                    {isExpandable(entry.text) ? (
-                      <button
-                        type="button"
-                        className="message-icon-button"
-                        onClick={() => toggleMessageExpanded(entry.id)}
-                        aria-label={expandedMessages[entry.id] ? t("aria.collapse_activity") : t("aria.expand_activity")}
-                      >
-                        {expandedMessages[entry.id] ? <Minimize2 size={14} /> : <Expand size={14} />}
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="message-icon-button"
-                      onClick={() => void handleCopyMessage(entry.id, entry.text)}
-                      aria-label={t("aria.copy_activity")}
-                    >
-                      <Copy size={14} />
-                    </button>
-                    {entry.status ? <span>{entry.status}</span> : null}
-                  </div>
-                </div>
-                <div className={`markdown-message ${expandedMessages[entry.id] ? "expanded" : ""}`}>
-                  {renderMarkdown(entry.text)}
-                </div>
-              </article>
-            ))}
-          </div>
-        ) : null}
-      </div>
-    );
   }
 
   async function handleOpenConfig() {
@@ -1880,72 +1976,20 @@ function App() {
 
       {activePage === "chat" ? (
         <main className="layout">
-        <section className="conversation-column">
-          <div className="section-head section-head-compact tight">
-            <div className="panel-title">
-              <MessagesSquare size={15} />
-              <h2>{t("section.conversation")}</h2>
-            </div>
-          </div>
-
-          <div className="conversation-panel" ref={scrollRef}>
-            {isLoading ? (
-              <div className="empty-state">
-                <LoaderCircle size={18} className="spin" />
-                <p>{t("empty.loading_sessions")}</p>
-              </div>
-            ) : currentThread ? (
-              conversationMessages.length ? (
-                conversationMessages.map((entry) => (
-                  <article key={entry.id} className={`message-card message-${entry.role} message-kind-${entry.kind}`}>
-                    <div className="message-head">
-                      <strong className="message-title">
-                        {messageIdentityIcon(entry.role)}
-                        <span>{localizeKnownUiText(entry.title, t)}</span>
-                      </strong>
-                      <div className="message-toolbar">
-                        {isExpandable(entry.text) ? (
-                          <button
-                            type="button"
-                            className="message-icon-button"
-                            onClick={() => toggleMessageExpanded(entry.id)}
-                            aria-label={expandedMessages[entry.id] ? t("aria.collapse_message") : t("aria.expand_message")}
-                          >
-                            {expandedMessages[entry.id] ? <Minimize2 size={14} /> : <Expand size={14} />}
-                          </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          className="message-icon-button"
-                          onClick={() => void handleCopyMessage(entry.id, entry.text)}
-                          aria-label={t("aria.copy_message")}
-                          title={copiedMessageId === entry.id ? t("button.copied") : t("button.copy")}
-                        >
-                          <Copy size={14} />
-                        </button>
-                      </div>
-                    </div>
-                    <div className={`markdown-message ${expandedMessages[entry.id] ? "expanded" : ""}`}>
-                      {renderMarkdown(entry.text)}
-                    </div>
-                    {renderMessageAttachments(entry.attachments)}
-                    {entry.role === "assistant" && entry.phase !== "commentary" ? renderInlineActivity(entry.id) : null}
-                  </article>
-                ))
-              ) : (
-                <div className="empty-state">
-                  <MessageSquareMore size={22} />
-                  <p>{t("empty.no_messages")}</p>
-                </div>
-              )
-            ) : (
-              <div className="empty-state">
-                <Plus size={22} />
-                <p>{t("empty.no_session")}</p>
-              </div>
-            )}
-          </div>
-        </section>
+        <ConversationPane
+          activityByAnchorMessageId={activityByAnchorMessageId}
+          conversationMessages={conversationMessages}
+          copiedCodeId={copiedCodeId}
+          copiedMessageId={copiedMessageId}
+          currentThread={currentThread}
+          expandedMessages={expandedMessages}
+          isLoading={isLoading}
+          onCopyCode={handleCopyCode}
+          onCopyMessage={handleCopyMessage}
+          onToggleExpanded={toggleMessageExpanded}
+          scrollRef={scrollRef}
+          t={t}
+        />
 
         <aside className="sidebar-column">
           <div className="sidebar-sticky">
