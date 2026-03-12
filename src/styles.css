@@ -282,6 +282,36 @@ pre {
   font-family: var(--font-display);
 }
 
+.conversation-head-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.conversation-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: min(280px, 100%);
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  color: var(--muted);
+}
+
+.conversation-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+}
+
 .brand p {
   font-size: 0.96rem;
   font-weight: 700;
@@ -1154,6 +1184,24 @@ pre {
   gap: 8px;
 }
 
+.inline-session-rename {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 26px 26px;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.inline-session-rename input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  color: var(--text);
+}
+
 .session-select-wrap {
   display: flex;
   align-items: center;
@@ -1662,6 +1710,33 @@ pre {
 
 .config-check input:checked + .config-switch .config-switch-thumb {
   transform: translateX(18px);
+}
+
+.diagnostics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.diagnostic-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+}
+
+.diagnostic-card strong {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.diagnostic-card span {
+  font-size: 0.82rem;
+  line-height: 1.45;
+  word-break: break-word;
 }
 
 .config-extra {

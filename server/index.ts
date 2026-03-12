@@ -9,7 +9,15 @@ import express from "express";
 import { fileURLToPath } from "node:url";
 import { CodexAppClient } from "./codex-app-client.js";
 import { SessionStore, mapItem, type Thread, type ThreadItem } from "./session-store.js";
-import type { AccountInfo, AvailableModel, CodexConfigInfo, MessageAttachment, SessionDetail, UploadedAttachment } from "./types.js";
+import type {
+  AccountInfo,
+  AvailableModel,
+  CodexConfigInfo,
+  DiagnosticsInfo,
+  MessageAttachment,
+  SessionDetail,
+  UploadedAttachment
+} from "./types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -564,6 +572,38 @@ async function getAccountInfo(currentThreadId?: string | null, locale = "en"): P
   };
 }
 
+async function getDiagnosticsInfo(selectedSessionId?: string | null): Promise<DiagnosticsInfo> {
+  const [loginStatus, codexVersion, projectsStats] = await Promise.all([
+    execFileAsync("codex", ["login", "status"], {
+      cwd: rootDir,
+      env: process.env
+    })
+      .then(({ stdout }) => stdout.trim() || "Login status unavailable")
+      .catch(() => "Login status unavailable"),
+    execFileAsync("codex", ["--version"], {
+      cwd: rootDir,
+      env: process.env
+    })
+      .then(({ stdout }) => stdout.trim() || "Unknown")
+      .catch(() => "Unknown"),
+    fs.stat(projectsRoot).catch(() => null)
+  ]);
+
+  return {
+    appVersion: "0.1.0",
+    nodeVersion: process.version,
+    codexVersion,
+    loginStatus,
+    currentWorkspace: activeWorkspaceDir,
+    projectsRoot,
+    projectsRootExists: Boolean(projectsStats?.isDirectory()),
+    configPath: codexConfigPath,
+    sessionCount: store.getSummaries().length,
+    selectedSessionId: selectedSessionId ?? null,
+    timestamp: Date.now()
+  };
+}
+
 codex.on("notification", async (message: { method: string; params?: Record<string, unknown> }) => {
   const params = message.params ?? {};
   const threadId = typeof params.threadId === "string" ? params.threadId : null;
@@ -940,6 +980,23 @@ app.post("/api/sessions/:threadId/model", async (request, response) => {
   response.json({ thread: detail, sessions: store.getSummaries() });
 });
 
+app.post("/api/sessions/:threadId/rename", async (request, response) => {
+  const threadId = request.params.threadId;
+  const name = typeof request.body?.name === "string" ? request.body.name.trim() : "";
+
+  await codex.request("thread/name/set", {
+    threadId,
+    name: name || null
+  });
+
+  const detail = await loadThread(threadId);
+  await listThreads();
+  store.upsertDetail(detail);
+  broadcast("sessions", store.getSummaries());
+  broadcast("thread", detail);
+  response.json({ thread: detail, sessions: store.getSummaries() });
+});
+
 app.post("/api/sessions", async (request, response) => {
   const name = typeof request.body?.name === "string" ? request.body.name.trim() : "";
   const cwd = typeof request.body?.cwd === "string" ? request.body.cwd.trim() : "";
@@ -1078,6 +1135,11 @@ app.get("/events", (request, response) => {
   request.on("close", () => {
     sseClients.delete(response);
   });
+});
+
+app.get("/api/diagnostics", async (request, response) => {
+  const selectedSessionId = typeof request.query.threadId === "string" ? request.query.threadId : null;
+  response.json({ diagnostics: await getDiagnosticsInfo(selectedSessionId) });
 });
 
 app.use(express.static(clientDist));

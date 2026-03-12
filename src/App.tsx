@@ -1,4 +1,14 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import {
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject
+} from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -12,10 +22,12 @@ import {
   ChevronRight,
   CircleStop,
   CircleX,
+  Check,
   Copy,
   Download,
   Expand,
   File,
+  FileDown,
   FileCode2,
   FileText,
   Files as FilesIcon,
@@ -33,12 +45,14 @@ import {
   Search,
   MessageSquareMore,
   Palette,
+  RotateCcw,
   Plus,
   RefreshCw,
   SendHorizonal,
   Settings2,
   Shield,
   ShieldAlert,
+  Stethoscope,
   SquarePen,
   Sparkles,
   TriangleAlert,
@@ -50,6 +64,7 @@ import type {
   AvailableModel,
   BootstrapResponse,
   CodexConfigInfo,
+  DiagnosticsInfo,
   MessageAttachment,
   SessionDetail,
   SessionSummary,
@@ -490,9 +505,14 @@ type ConversationPaneProps = {
   currentThread: SessionDetail | null;
   expandedMessages: Record<string, boolean>;
   isLoading: boolean;
+  matchedCount: number;
+  onClearSearch: () => void;
   onCopyCode: (codeId: string, text: string) => void | Promise<void>;
   onCopyMessage: (messageId: string, text: string) => void | Promise<void>;
+  onExport: () => void;
+  onSearchChange: (value: string) => void;
   onToggleExpanded: (messageId: string) => void;
+  searchValue: string;
   scrollRef: RefObject<HTMLDivElement | null>;
   t: Translator;
 };
@@ -505,9 +525,14 @@ const ConversationPane = memo(function ConversationPane({
   currentThread,
   expandedMessages,
   isLoading,
+  matchedCount,
+  onClearSearch,
   onCopyCode,
   onCopyMessage,
+  onExport,
+  onSearchChange,
   onToggleExpanded,
+  searchValue,
   scrollRef,
   t
 }: ConversationPaneProps) {
@@ -655,6 +680,22 @@ const ConversationPane = memo(function ConversationPane({
           <MessagesSquare size={15} />
           <h2>{t("section.conversation")}</h2>
         </div>
+        <div className="conversation-head-tools">
+          <label className="conversation-search">
+            <Search size={14} />
+            <input value={searchValue} onChange={(event) => onSearchChange(event.target.value)} placeholder={t("input.search_conversation")} />
+            {searchValue ? (
+              <button type="button" className="message-icon-button" onClick={onClearSearch} aria-label={t("aria.clear_search")}>
+                <CircleX size={13} />
+              </button>
+            ) : null}
+          </label>
+          {searchValue ? <span className="meta-tag">{t("label.search_matches", { count: matchedCount })}</span> : null}
+          <button type="button" className="ghost-button subtle" onClick={onExport}>
+            <FileDown size={15} />
+            {t("button.export")}
+          </button>
+        </div>
       </div>
 
       <div className="conversation-panel" ref={scrollRef}>
@@ -723,6 +764,7 @@ function App() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [currentThread, setCurrentThread] = useState<SessionDetail | null>(null);
   const [message, setMessage] = useState("");
+  const [conversationSearch, setConversationSearch] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [newSessionName, setNewSessionName] = useState("");
   const [newSessionPath, setNewSessionPath] = useState("");
@@ -744,6 +786,7 @@ function App() {
   const [isConfigSaving, setIsConfigSaving] = useState(false);
   const [isSessionsOverlayOpen, setIsSessionsOverlayOpen] = useState(false);
   const [isQuickPromptsOpen, setIsQuickPromptsOpen] = useState(false);
+  const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
   const [isModelOverlayOpen, setIsModelOverlayOpen] = useState(false);
   const [isImageOverlayOpen, setIsImageOverlayOpen] = useState(false);
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
@@ -768,6 +811,11 @@ function App() {
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
   const [isModelsLoading, setIsModelsLoading] = useState(false);
   const [isModelSaving, setIsModelSaving] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<DiagnosticsInfo | null>(null);
+  const [isDiagnosticsLoading, setIsDiagnosticsLoading] = useState(false);
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [sessionRenameValue, setSessionRenameValue] = useState("");
+  const [isSessionRenaming, setIsSessionRenaming] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pendingAutoScrollRef = useRef(false);
@@ -781,6 +829,7 @@ function App() {
     count: 0
   });
   const selectedThreadId = currentThread?.summary.id ?? null;
+  const deferredConversationSearch = useDeferredValue(conversationSearch.trim().toLowerCase());
   const selectedSessionModel =
     currentThread?.summary.model ??
     sessions.find((entry) => entry.id === selectedThreadId)?.model ??
@@ -797,6 +846,18 @@ function App() {
       ) ?? [],
     [currentThread?.messages]
   );
+  const filteredConversationMessages = useMemo(() => {
+    if (!deferredConversationSearch) {
+      return conversationMessages;
+    }
+
+    return conversationMessages.filter((entry) => {
+      const haystack = [entry.title, entry.text, ...(entry.attachments?.map((attachment) => attachment.name) ?? [])]
+        .join("\n")
+        .toLowerCase();
+      return haystack.includes(deferredConversationSearch);
+    });
+  }, [conversationMessages, deferredConversationSearch]);
   const t = useCallback<Translator>((key, params) => translate(language, key, params), [language]);
   const localizedLiveStatusLabel = currentThread?.liveStatus.label
     ? localizeKnownUiText(currentThread.liveStatus.label, t)
@@ -804,6 +865,10 @@ function App() {
   const localizedLiveStatusDetail = currentThread?.liveStatus.detail
     ? localizeKnownUiText(currentThread.liveStatus.detail, t)
     : t("status.select_session");
+  const lastUserMessage = useMemo(
+    () => [...conversationMessages].reverse().find((entry) => entry.role === "user") ?? null,
+    [conversationMessages]
+  );
 
   const notify = useCallback((kind: NotificationKind, message: string) => {
     const id = notificationIdRef.current++;
@@ -945,6 +1010,19 @@ function App() {
     const data = await fetchJson<{ config: CodexConfigInfo }>("/api/config");
     setConfigForm(parseConfigForm(data.config.content));
     setConfigPath(data.config.path);
+  }
+
+  async function loadDiagnostics() {
+    setIsDiagnosticsLoading(true);
+    try {
+      const query = selectedThreadId ? `?threadId=${encodeURIComponent(selectedThreadId)}` : "";
+      const data = await fetchJson<{ diagnostics: DiagnosticsInfo }>(`/api/diagnostics${query}`);
+      setDiagnostics(data.diagnostics);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : t("error.load_diagnostics"));
+    } finally {
+      setIsDiagnosticsLoading(false);
+    }
   }
 
   async function readFileAsBase64(file: File) {
@@ -1369,8 +1447,9 @@ function App() {
     }
   }
 
-  async function submitMessageText(submitted: string) {
-    if (!currentThread || (!submitted.trim() && !pendingAttachments.length)) {
+  async function submitMessageText(submitted: string, attachmentsOverride?: UploadedAttachment[]) {
+    const retryAttachments = attachmentsOverride ?? null;
+    if (!currentThread || (!submitted.trim() && !pendingAttachments.length && !retryAttachments?.length)) {
       if (!currentThread) {
         notifyWarning(t("notify.select_session_before_prompt"));
       }
@@ -1378,9 +1457,21 @@ function App() {
     }
 
     const nextMessage = submitted.trim();
-    const nextAttachments = pendingAttachments;
+    const nextAttachments =
+      retryAttachments ??
+      pendingAttachments.map(({ id, name, path, mimeType, size, kind, previewUrl }) => ({
+        id,
+        name,
+        path,
+        mimeType,
+        size,
+        kind,
+        previewUrl
+      }));
     setMessage("");
-    setPendingAttachments([]);
+    if (!retryAttachments) {
+      setPendingAttachments([]);
+    }
     setIsPosting(true);
 
     setCurrentThread((previous) =>
@@ -1438,7 +1529,9 @@ function App() {
       setError(null);
     } catch (nextError) {
       setMessage(nextMessage);
-      setPendingAttachments(nextAttachments);
+      if (!retryAttachments) {
+        setPendingAttachments(nextAttachments as PendingAttachment[]);
+      }
       setError(nextError instanceof Error ? nextError.message : t("error.send_message"));
       await loadThread(currentThread.summary.id, { preserveError: true });
     } finally {
@@ -1574,6 +1667,25 @@ function App() {
     await submitMessageText(content);
   }
 
+  async function handleRetryLastPrompt() {
+    if (!currentThread || !lastUserMessage) {
+      notifyWarning(t("notify.no_prompt_to_retry"));
+      return;
+    }
+
+    const retryAttachments: UploadedAttachment[] =
+      lastUserMessage.attachments?.map((attachment) => ({
+        id: attachment.id,
+        name: attachment.name,
+        path: attachment.path,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+        kind: attachment.kind
+      })) ?? [];
+
+    await submitMessageText(lastUserMessage.text || "", retryAttachments);
+  }
+
   const handleCopyMessage = useCallback(async (messageId: string, text: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -1586,6 +1698,95 @@ function App() {
       setError(t("error.copy_message"));
     }
   }, [notifySuccess, setError, t]);
+
+  function handleBeginRenameSession() {
+    if (!currentThread) {
+      return;
+    }
+
+    setRenamingSessionId(currentThread.summary.id);
+    setSessionRenameValue(currentThread.summary.name ?? "");
+  }
+
+  function handleCancelRenameSession() {
+    setRenamingSessionId(null);
+    setSessionRenameValue("");
+  }
+
+  async function handleRenameSession() {
+    if (!renamingSessionId) {
+      return;
+    }
+
+    setIsSessionRenaming(true);
+    try {
+      const data = await fetchJson<{ thread: SessionDetail; sessions: SessionSummary[] }>(
+        `/api/sessions/${renamingSessionId}/rename`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            name: sessionRenameValue
+          })
+        }
+      );
+      setCurrentThread((previous) => (previous?.summary.id === data.thread.summary.id ? data.thread : previous));
+      setSessions(data.sessions);
+      handleCancelRenameSession();
+      notifySuccess(t("notify.session_renamed"));
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : t("error.rename_session"));
+    } finally {
+      setIsSessionRenaming(false);
+    }
+  }
+
+  const handleExportConversation = useCallback(() => {
+    if (!currentThread) {
+      return;
+    }
+
+    const title = deriveSessionTitle(currentThread.summary, t("session.untitled"));
+    const markdown = [
+      `# ${title}`,
+      "",
+      `- Model: ${currentThread.summary.model ?? "n/a"}`,
+      `- Workspace: ${currentThread.summary.cwd}`,
+      ""
+    ];
+
+    for (const entry of conversationMessages) {
+      markdown.push(`## ${localizeKnownUiText(entry.title, t)}`);
+      markdown.push("");
+      if (entry.text) {
+        markdown.push(entry.text);
+        markdown.push("");
+      }
+      if (entry.attachments?.length) {
+        markdown.push(...entry.attachments.map((attachment) => `- Image: ${attachment.name}`));
+        markdown.push("");
+      }
+    }
+
+    const blob = new Blob(["\uFEFF", markdown.join("\n")], { type: "text/markdown;charset=utf-8" });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${title.toLowerCase().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "session"}.md`;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(url);
+    notifySuccess(t("notify.exported_session"));
+  }, [conversationMessages, currentThread, notifySuccess, t]);
+
+  const handleClearConversationSearch = useCallback(() => {
+    setConversationSearch("");
+  }, []);
+
+  async function handleOpenDiagnostics() {
+    setIsDiagnosticsOpen(true);
+    await loadDiagnostics();
+  }
 
   const handleCopyCode = useCallback(async (codeId: string, text: string) => {
     try {
@@ -1965,6 +2166,16 @@ function App() {
           <button
             className="ghost-button icon-only"
             type="button"
+            onClick={() => void handleOpenDiagnostics()}
+            aria-label={t("nav.diagnostics")}
+            title={t("nav.diagnostics")}
+          >
+            <Stethoscope size={16} />
+          </button>
+
+          <button
+            className="ghost-button icon-only"
+            type="button"
             onClick={() => void handleOpenConfig()}
             aria-label={t("nav.configs")}
             title={t("nav.configs")}
@@ -1978,15 +2189,20 @@ function App() {
         <main className="layout">
         <ConversationPane
           activityByAnchorMessageId={activityByAnchorMessageId}
-          conversationMessages={conversationMessages}
+          conversationMessages={filteredConversationMessages}
           copiedCodeId={copiedCodeId}
           copiedMessageId={copiedMessageId}
           currentThread={currentThread}
           expandedMessages={expandedMessages}
           isLoading={isLoading}
+          matchedCount={filteredConversationMessages.length}
+          onClearSearch={handleClearConversationSearch}
           onCopyCode={handleCopyCode}
           onCopyMessage={handleCopyMessage}
+          onExport={handleExportConversation}
+          onSearchChange={setConversationSearch}
           onToggleExpanded={toggleMessageExpanded}
+          searchValue={conversationSearch}
           scrollRef={scrollRef}
           t={t}
         />
@@ -2011,6 +2227,9 @@ function App() {
                     </button>
                   ) : null}
                   <span className="meta-tag">{t("label.msg_count", { count: visibleConversationCount })}</span>
+                  <button type="button" className="message-icon-button" onClick={handleBeginRenameSession} aria-label={t("aria.rename_session")}>
+                    <SquarePen size={14} />
+                  </button>
                 </div>
               </div>
 
@@ -2044,6 +2263,23 @@ function App() {
                   <Plus size={16} />
                 </button>
               </div>
+
+              {renamingSessionId === selectedThreadId ? (
+                <div className="inline-session-rename">
+                  <input
+                    value={sessionRenameValue}
+                    onChange={(event) => setSessionRenameValue(event.target.value)}
+                    placeholder={t("input.rename_session")}
+                    disabled={isSessionRenaming}
+                  />
+                  <button type="button" className="message-icon-button" onClick={() => void handleRenameSession()} disabled={isSessionRenaming}>
+                    <Check size={14} />
+                  </button>
+                  <button type="button" className="message-icon-button" onClick={handleCancelRenameSession} disabled={isSessionRenaming}>
+                    <CircleX size={14} />
+                  </button>
+                </div>
+              ) : null}
             </section>
 
             <section className="sidebar-panel composer-panel">
@@ -2052,6 +2288,16 @@ function App() {
                   <SquarePen size={15} />
                   <h2>{t("section.composer")}</h2>
                 </div>
+                <button
+                  type="button"
+                  className="ghost-button subtle"
+                  onClick={() => void handleRetryLastPrompt()}
+                  disabled={!currentThread || isPosting || !lastUserMessage}
+                >
+                  <RotateCcw size={15} />
+                  {t("button.retry")}
+                </button>
+
                 <button
                   type="button"
                   className="ghost-button subtle"
@@ -2236,6 +2482,78 @@ function App() {
           </aside>
         </main>
       )}
+
+      {isDiagnosticsOpen ? (
+        <div className="modal-backdrop" onClick={() => setIsDiagnosticsOpen(false)}>
+          <section className="modal-card modal-card-wide" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <h3>{t("modal.diagnostics_title")}</h3>
+              <button
+                type="button"
+                className="ghost-button subtle icon-button"
+                onClick={() => setIsDiagnosticsOpen(false)}
+                aria-label={t("aria.close_diagnostics_modal")}
+              >
+                <CircleX size={16} />
+              </button>
+            </div>
+
+            <p className="modal-copy">{t("modal.diagnostics_copy")}</p>
+
+            {isDiagnosticsLoading ? (
+              <div className="empty-state compact-empty">
+                <LoaderCircle size={18} className="spin" />
+                <p>{t("label.loading")}</p>
+              </div>
+            ) : diagnostics ? (
+              <div className="diagnostics-grid">
+                <article className="diagnostic-card">
+                  <strong>{t("diagnostics.codex_version")}</strong>
+                  <span>{diagnostics.codexVersion}</span>
+                </article>
+                <article className="diagnostic-card">
+                  <strong>{t("diagnostics.node_version")}</strong>
+                  <span>{diagnostics.nodeVersion}</span>
+                </article>
+                <article className="diagnostic-card">
+                  <strong>{t("diagnostics.current_workspace")}</strong>
+                  <span>{diagnostics.currentWorkspace}</span>
+                </article>
+                <article className="diagnostic-card">
+                  <strong>{t("diagnostics.login_status")}</strong>
+                  <span>{diagnostics.loginStatus}</span>
+                </article>
+                <article className="diagnostic-card">
+                  <strong>{t("diagnostics.projects_root")}</strong>
+                  <span>{diagnostics.projectsRoot}</span>
+                </article>
+                <article className="diagnostic-card">
+                  <strong>{t("diagnostics.projects_status")}</strong>
+                  <span>{diagnostics.projectsRootExists ? t("diagnostics.available") : t("diagnostics.missing")}</span>
+                </article>
+                <article className="diagnostic-card">
+                  <strong>{t("diagnostics.config_path")}</strong>
+                  <span>{diagnostics.configPath}</span>
+                </article>
+                <article className="diagnostic-card">
+                  <strong>{t("diagnostics.sessions")}</strong>
+                  <span>{diagnostics.sessionCount}</span>
+                </article>
+              </div>
+            ) : null}
+
+            <div className="modal-actions">
+              <button type="button" className="ghost-button subtle" onClick={() => void loadDiagnostics()} disabled={isDiagnosticsLoading}>
+                <RefreshCw size={15} />
+                {t("button.refresh")}
+              </button>
+              <button type="button" className="solid-button" onClick={() => setIsDiagnosticsOpen(false)}>
+                {t("button.close")}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {archiveTarget ? (
         <div className="modal-backdrop" onClick={() => setArchiveTarget(null)}>

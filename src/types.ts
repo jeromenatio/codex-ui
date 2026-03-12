@@ -85,6 +85,20 @@ export type MessageAttachment = {
   url: string;
 };
 
+export type DiagnosticsInfo = {
+  appVersion: string;
+  nodeVersion: string;
+  codexVersion: string;
+  loginStatus: string;
+  currentWorkspace: string;
+  projectsRoot: string;
+  projectsRootExists: boolean;
+  configPath: string;
+  sessionCount: number;
+  selectedSessionId: string | null;
+  timestamp: number;
+};
+
 export type Theme = {
   id: string;
   label: string;
