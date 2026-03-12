@@ -51,54 +51,57 @@ import type {
   Theme,
   UploadedAttachment
 } from "./types";
+import { translate, type Locale } from "./i18n";
 
 const THEMES: Theme[] = [
   {
     id: "paper",
-    label: "Paper Console",
-    description: "Ivoire, encre et accent cyan."
+    label: "theme.paper",
+    description: "theme.paper"
   },
   {
     id: "glacier",
-    label: "Glacier Grid",
-    description: "Bleu froid, fond givré et séparation nette des échanges."
+    label: "theme.glacier",
+    description: "theme.glacier"
   },
   {
     id: "moss",
-    label: "Moss Terminal",
-    description: "Sauge dense, pierre claire et contraste conversationnel marqué."
+    label: "theme.moss",
+    description: "theme.moss"
   },
   {
     id: "ember",
-    label: "Ember Ledger",
-    description: "Argile chaude, accents cuivre et bulles fortement séparées."
+    label: "theme.ember",
+    description: "theme.ember"
   },
   {
     id: "rose",
-    label: "Rose Signal",
-    description: "Rosé pâle, prune sèche et hiérarchie plus éditoriale."
+    label: "theme.rose",
+    description: "theme.rose"
   },
   {
     id: "solar",
-    label: "Solar Draft",
-    description: "Crème lumineuse, safran franc et lecture très découpée."
+    label: "theme.solar",
+    description: "theme.solar"
   },
   {
     id: "cobalt",
-    label: "Cobalt Frame",
-    description: "Bleu net, gris clair et rendu plus graphique."
+    label: "theme.cobalt",
+    description: "theme.cobalt"
   },
   {
     id: "mono",
-    label: "Mono Slate",
-    description: "Quasi monochrome, graphite marqué et contraste sobre."
+    label: "theme.mono",
+    description: "theme.mono"
   }
 ];
 
 const THREAD_KEY = "codex-ui-current-thread";
 const THEME_KEY = "codex-ui-theme";
 const QUICK_PROMPTS_KEY = "codex-ui-quick-prompts";
+const LANGUAGE_KEY = "codex-ui-language";
 const DEFAULT_THEME = "paper";
+const DEFAULT_LANGUAGE: Locale = "en";
 
 type AppPage = "chat" | "files";
 type FileTreeEntry = {
@@ -139,12 +142,6 @@ type QuickPrompt = {
   content: string;
 };
 
-const DEFAULT_QUICK_PROMPTS: QuickPrompt[] = [
-  { id: "commit-push", title: "Commit et push", content: "Commit et push stp" },
-  { id: "restart-server", title: "Relance le serveur", content: "Relance le serveur stp" },
-  { id: "build-check", title: "Build", content: "Lance un build et dis-moi s'il y a des erreurs" }
-];
-
 function notificationIcon(kind: NotificationKind) {
   switch (kind) {
     case "error":
@@ -171,16 +168,35 @@ function resolveTheme(themeId: string | null) {
   return THEMES.some((theme) => theme.id === themeId) ? themeId! : DEFAULT_THEME;
 }
 
-function loadQuickPrompts() {
+function resolveStoredLanguage(): Locale {
+  const storedLanguage = window.localStorage.getItem(LANGUAGE_KEY);
+  return storedLanguage === "en" || storedLanguage === "fr" ? storedLanguage : DEFAULT_LANGUAGE;
+}
+
+function defaultQuickPrompts(locale: Locale): QuickPrompt[] {
+  return locale === "fr"
+    ? [
+        { id: "commit-push", title: "Commit et push", content: "Commit et push stp" },
+        { id: "restart-server", title: "Relance le serveur", content: "Relance le serveur stp" },
+        { id: "build-check", title: "Build", content: "Lance un build et dis-moi s'il y a des erreurs" }
+      ]
+    : [
+        { id: "commit-push", title: "Commit and push", content: "Commit and push please" },
+        { id: "restart-server", title: "Restart server", content: "Restart the server please" },
+        { id: "build-check", title: "Build", content: "Run a build and tell me if there are any errors" }
+      ];
+}
+
+function loadQuickPrompts(locale: Locale) {
   try {
     const raw = window.localStorage.getItem(QUICK_PROMPTS_KEY);
     if (!raw) {
-      return DEFAULT_QUICK_PROMPTS;
+      return defaultQuickPrompts(locale);
     }
 
     const parsed = JSON.parse(raw) as QuickPrompt[];
     if (!Array.isArray(parsed)) {
-      return DEFAULT_QUICK_PROMPTS;
+      return defaultQuickPrompts(locale);
     }
 
     const valid = parsed.filter(
@@ -193,9 +209,9 @@ function loadQuickPrompts() {
         entry.content.trim()
     );
 
-    return valid.length ? valid : DEFAULT_QUICK_PROMPTS;
+    return valid.length ? valid : defaultQuickPrompts(locale);
   } catch {
-    return DEFAULT_QUICK_PROMPTS;
+    return defaultQuickPrompts(locale);
   }
 }
 
@@ -246,6 +262,7 @@ function isCodeExtension(extension: string | null) {
 }
 
 async function fetchJson<T>(input: RequestInfo, init?: RequestInit) {
+  const locale = typeof window !== "undefined" ? resolveStoredLanguage() : DEFAULT_LANGUAGE;
   const response = await fetch(input, {
     headers: {
       "Content-Type": "application/json"
@@ -254,24 +271,29 @@ async function fetchJson<T>(input: RequestInfo, init?: RequestInit) {
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: "Unknown error" }));
-    throw new Error(error.error ?? "Request failed");
+    const error = await response
+      .json()
+      .catch(() => ({ error: translate(locale, "error.unknown") }));
+    throw new Error(error.error ?? translate(locale, "error.request_failed"));
   }
 
   return (await response.json()) as T;
 }
 
-function formatSessionDate(timestamp: number) {
-  return new Intl.DateTimeFormat("fr-FR", {
+function formatSessionDate(timestamp: number, locale: Locale) {
+  return new Intl.DateTimeFormat(locale === "fr" ? "fr-FR" : "en-US", {
     day: "2-digit",
     month: "2-digit",
     year: "2-digit"
   }).format(timestamp * 1000);
 }
 
-function deriveSessionTitle(session: Pick<SessionSummary, "name" | "preview"> | null | undefined) {
+function deriveSessionTitle(
+  session: Pick<SessionSummary, "name" | "preview"> | null | undefined,
+  untitledLabel = translate(typeof window !== "undefined" ? resolveStoredLanguage() : DEFAULT_LANGUAGE, "session.untitled")
+) {
   if (!session) {
-    return "Untitled session";
+    return untitledLabel;
   }
 
   const explicit = session.name?.trim();
@@ -280,7 +302,7 @@ function deriveSessionTitle(session: Pick<SessionSummary, "name" | "preview"> | 
   }
 
   const fallback = session.preview.replace(/\s+/g, " ").trim();
-  return fallback ? fallback.slice(0, 72) : "Untitled session";
+  return fallback ? fallback.slice(0, 72) : untitledLabel;
 }
 
 function isExpandable(text: string) {
@@ -347,7 +369,8 @@ function App() {
   const [isPosting, setIsPosting] = useState(false);
   const [isUploadingAttachments, setIsUploadingAttachments] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
-  const [theme, setTheme] = useState<string>(DEFAULT_THEME);
+  const [theme, setTheme] = useState<string>(() => resolveTheme(window.localStorage.getItem(THEME_KEY)));
+  const [language, setLanguage] = useState<Locale>(() => resolveStoredLanguage());
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isActivityOpen, setIsActivityOpen] = useState(false);
   const [expandedMessages, setExpandedMessages] = useState<Record<string, boolean>>({});
@@ -364,7 +387,7 @@ function App() {
   const [isImageOverlayOpen, setIsImageOverlayOpen] = useState(false);
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [quickPrompts, setQuickPrompts] = useState<QuickPrompt[]>(() => loadQuickPrompts());
+  const [quickPrompts, setQuickPrompts] = useState<QuickPrompt[]>(() => loadQuickPrompts(resolveStoredLanguage()));
   const [editingQuickPromptId, setEditingQuickPromptId] = useState<string | null>(null);
   const [quickPromptTitle, setQuickPromptTitle] = useState("");
   const [quickPromptContent, setQuickPromptContent] = useState("");
@@ -373,7 +396,7 @@ function App() {
   const [loadingFolders, setLoadingFolders] = useState<Record<string, boolean>>({});
   const [selectedFilePath, setSelectedFilePath] = useState("");
   const [selectedFileContent, setSelectedFileContent] = useState("");
-  const [selectedFileName, setSelectedFileName] = useState("Select a file");
+  const [selectedFileName, setSelectedFileName] = useState("");
   const [isFileTreeLoading, setIsFileTreeLoading] = useState(false);
   const [isFileContentLoading, setIsFileContentLoading] = useState(false);
   const [isFileContentCopied, setIsFileContentCopied] = useState(false);
@@ -417,6 +440,13 @@ function App() {
       ) ?? [],
     [currentThread?.messages]
   );
+  const t = (key: string, params?: Record<string, string | number>) => translate(language, key, params);
+  const localizedLiveStatusLabel = currentThread?.liveStatus.label
+    ? localizeKnownUiText(currentThread.liveStatus.label, t)
+    : t("status.ready");
+  const localizedLiveStatusDetail = currentThread?.liveStatus.detail
+    ? localizeKnownUiText(currentThread.liveStatus.detail, t)
+    : t("status.select_session");
 
   function notify(kind: NotificationKind, message: string) {
     const id = notificationIdRef.current++;
@@ -452,6 +482,28 @@ function App() {
     }
   }
 
+  function localizeKnownUiText(text: string, translator: typeof t) {
+    const known: Record<string, string> = {
+      Ready: "status.ready",
+      "Prêt": "status.ready",
+      "Select or create a session.": "status.select_session",
+      "Sélectionne ou crée une session.": "status.select_session",
+      Queued: "status.queued",
+      "En file": "status.queued",
+      "Message sent to Codex.": "status.message_sent",
+      "Message envoyé à Codex.": "status.message_sent",
+      Stopping: "status.stopping",
+      "Arrêt en cours": "status.stopping",
+      "Interrupt requested.": "status.interrupt_requested",
+      "Interruption demandée.": "status.interrupt_requested",
+      You: "message.you",
+      Vous: "message.you"
+    };
+
+    const key = known[text];
+    return key ? translator(key) : text;
+  }
+
   async function refreshSessions() {
     const data = await fetchJson<{ sessions: SessionSummary[] }>("/api/sessions");
     setSessions(data.sessions);
@@ -477,7 +529,7 @@ function App() {
         const [, contentBase64 = ""] = result.split(",", 2);
         resolve(contentBase64);
       };
-      reader.onerror = () => reject(reader.error ?? new Error("Unable to read file."));
+      reader.onerror = () => reject(reader.error ?? new Error(t("error.read_file")));
       reader.readAsDataURL(file);
     });
   }
@@ -490,13 +542,13 @@ function App() {
 
     const imageFiles = files.filter(isImageFile);
     if (!imageFiles.length) {
-      notifyWarning("Only image attachments are supported.");
+      notifyWarning(t("notify.images_only"));
       event.target.value = "";
       return;
     }
 
     if (imageFiles.length !== files.length) {
-      notifyInfo("Only image files were kept.");
+      notifyInfo(t("notify.images_filtered"));
     }
 
     setIsUploadingAttachments(true);
@@ -525,9 +577,9 @@ function App() {
           previewUrl: payload[index]?.previewUrl ?? null
         }))
       ]);
-      notifySuccess(imageFiles.length === 1 ? "Image added." : "Images added.");
+      notifySuccess(t(imageFiles.length === 1 ? "notify.image_added" : "notify.images_added"));
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to add attachments.");
+      setError(nextError instanceof Error ? nextError.message : t("error.add_attachments"));
     } finally {
       setIsUploadingAttachments(false);
       event.target.value = "";
@@ -540,7 +592,7 @@ function App() {
       const data = await fetchJson<{ models: AvailableModel[] }>("/api/models");
       setAvailableModels(data.models);
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to load models.");
+      setError(nextError instanceof Error ? nextError.message : t("error.load_models"));
     } finally {
       setIsModelsLoading(false);
     }
@@ -562,7 +614,7 @@ function App() {
       }
       setError(null);
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to load the file tree.");
+      setError(nextError instanceof Error ? nextError.message : t("error.load_tree"));
     } finally {
       if (!folderPath) {
         setIsFileTreeLoading(false);
@@ -583,9 +635,9 @@ function App() {
       setSelectedFileContent(data.content);
       setError(null);
     } catch (nextError) {
-      setSelectedFileName(filePath.split("/").pop() || "Unknown file");
+      setSelectedFileName(filePath.split("/").pop() || t("error.unknown_file"));
       setSelectedFileContent("");
-      setError(nextError instanceof Error ? nextError.message : "Unable to load the selected file.");
+      setError(nextError instanceof Error ? nextError.message : t("error.load_file"));
     } finally {
       setIsFileContentLoading(false);
     }
@@ -670,7 +722,7 @@ function App() {
       } catch {
         setSessions([]);
       }
-      setError(nextError instanceof Error ? nextError.message : "Unable to load the UI.");
+      setError(nextError instanceof Error ? nextError.message : t("error.load_ui"));
     } finally {
       setIsLoading(false);
     }
@@ -678,11 +730,6 @@ function App() {
 
   useEffect(() => {
     void bootstrap();
-  }, []);
-
-  useEffect(() => {
-    const storedTheme = resolveTheme(localStorage.getItem(THEME_KEY));
-    setTheme(storedTheme);
   }, []);
 
   useEffect(() => {
@@ -695,6 +742,10 @@ function App() {
     localStorage.setItem(THEME_KEY, resolvedTheme);
     document.documentElement.dataset.theme = resolvedTheme;
   }, [theme]);
+
+  useEffect(() => {
+    window.localStorage.setItem(LANGUAGE_KEY, language);
+  }, [language]);
 
   useEffect(() => {
     window.localStorage.setItem(QUICK_PROMPTS_KEY, JSON.stringify(quickPrompts));
@@ -850,7 +901,7 @@ function App() {
       localStorage.setItem(THREAD_KEY, data.thread.summary.id);
       setError(null);
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to create a new session.");
+      setError(nextError instanceof Error ? nextError.message : t("error.create_session"));
     } finally {
       setIsCreating(false);
     }
@@ -859,7 +910,7 @@ function App() {
   async function submitMessageText(submitted: string) {
     if (!currentThread || (!submitted.trim() && !pendingAttachments.length)) {
       if (!currentThread) {
-        notifyWarning("Select a session before sending a quick prompt.");
+        notifyWarning(t("notify.select_session_before_prompt"));
       }
       return;
     }
@@ -880,8 +931,8 @@ function App() {
                 id: `optimistic-${Date.now()}`,
                 kind: "user",
                 role: "user",
-                title: "You",
-                text: [nextMessage, ...nextAttachments.map((attachment) => `[Attached: ${attachment.name}]`)]
+                title: t("message.you"),
+                text: [nextMessage, ...nextAttachments.map((attachment) => `[${t("label.attached")}: ${attachment.name}]`)]
                   .filter(Boolean)
                   .join("\n\n"),
                 attachments: nextAttachments.map((attachment) => ({
@@ -898,8 +949,8 @@ function App() {
             ],
             liveStatus: {
               tone: "running",
-              label: "Queued",
-              detail: "Message sent to Codex.",
+              label: t("status.queued"),
+              detail: t("status.message_sent"),
               updatedAt: Date.now()
             }
           }
@@ -926,7 +977,7 @@ function App() {
     } catch (nextError) {
       setMessage(nextMessage);
       setPendingAttachments(nextAttachments);
-      setError(nextError instanceof Error ? nextError.message : "Unable to send the message.");
+      setError(nextError instanceof Error ? nextError.message : t("error.send_message"));
       await loadThread(currentThread.summary.id, { preserveError: true });
     } finally {
       setIsPosting(false);
@@ -951,8 +1002,8 @@ function App() {
               liveStatus: {
                 ...previous.liveStatus,
                 tone: "waiting",
-                label: "Stopping",
-                detail: "Interrupt requested.",
+                label: t("status.stopping"),
+                detail: t("status.interrupt_requested"),
                 updatedAt: Date.now()
               }
             }
@@ -963,7 +1014,7 @@ function App() {
       });
       setError(null);
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to stop the current turn.");
+      setError(nextError instanceof Error ? nextError.message : t("error.stop_turn"));
     }
   }
 
@@ -1009,7 +1060,7 @@ function App() {
     const content = quickPromptContent.trim();
 
     if (!title || !content) {
-      notifyWarning("A quick prompt needs a title and a message.");
+      notifyWarning(t("notify.prompt_requires_title"));
       return;
     }
 
@@ -1017,10 +1068,10 @@ function App() {
       setQuickPrompts((previous) =>
         previous.map((entry) => (entry.id === editingQuickPromptId ? { ...entry, title, content } : entry))
       );
-      notifySuccess("Quick prompt updated.");
+      notifySuccess(t("notify.quick_prompt_updated"));
     } else {
       setQuickPrompts((previous) => [...previous, { id: `prompt-${Date.now()}`, title, content }]);
-      notifySuccess("Quick prompt created.");
+      notifySuccess(t("notify.quick_prompt_created"));
     }
 
     resetQuickPromptEditor();
@@ -1031,7 +1082,7 @@ function App() {
     if (editingQuickPromptId === promptId) {
       resetQuickPromptEditor();
     }
-    notifyInfo("Quick prompt removed.");
+    notifyInfo(t("notify.quick_prompt_removed"));
   }
 
   function handleMoveQuickPrompt(promptId: string, direction: -1 | 1) {
@@ -1053,7 +1104,7 @@ function App() {
   function handleInsertQuickPrompt(content: string) {
     setMessage((current) => (current.trim() ? `${current.trim()}\n\n${content}` : content));
     setIsQuickPromptsOpen(false);
-    notifyInfo("Quick prompt inserted into the composer.");
+    notifyInfo(t("notify.quick_prompt_inserted"));
   }
 
   async function handleSendQuickPrompt(content: string) {
@@ -1065,12 +1116,12 @@ function App() {
     try {
       await navigator.clipboard.writeText(text);
       setCopiedMessageId(messageId);
-      notifySuccess("Message copied.");
+      notifySuccess(t("notify.copied_message"));
       window.setTimeout(() => {
         setCopiedMessageId((current) => (current === messageId ? null : current));
       }, 1200);
     } catch {
-      setError("Unable to copy message.");
+      setError(t("error.copy_message"));
     }
   }
 
@@ -1098,12 +1149,12 @@ function App() {
     try {
       await navigator.clipboard.writeText(text);
       setCopiedCodeId(codeId);
-      notifySuccess("Code block copied.");
+      notifySuccess(t("notify.copied_code"));
       window.setTimeout(() => {
         setCopiedCodeId((current) => (current === codeId ? null : current));
       }, 1200);
     } catch {
-      setError("Unable to copy code block.");
+      setError(t("error.copy_code"));
     }
   }
 
@@ -1115,12 +1166,12 @@ function App() {
     try {
       await navigator.clipboard.writeText(selectedFileContent);
       setIsFileContentCopied(true);
-      notifySuccess("File content copied.");
+      notifySuccess(t("notify.copied_file"));
       window.setTimeout(() => {
         setIsFileContentCopied(false);
       }, 1200);
     } catch {
-      setError("Unable to copy file content.");
+      setError(t("error.copy_file"));
     }
   }
 
@@ -1144,8 +1195,8 @@ function App() {
       });
 
       if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: "Unable to create archive." }));
-        throw new Error(error.error ?? "Unable to create archive.");
+        const error = await response.json().catch(() => ({ error: t("error.create_archive") }));
+        throw new Error(error.error ?? t("error.create_archive"));
       }
 
       const blob = await response.blob();
@@ -1162,10 +1213,10 @@ function App() {
 
       setArchiveTarget(null);
       setIncludeEnvInArchive(false);
-      notifySuccess("Archive download started.");
+      notifySuccess(t("notify.archive_started"));
       setError(null);
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to download archive.");
+      setError(nextError instanceof Error ? nextError.message : t("error.download_archive"));
     } finally {
       setIsArchiveDownloading(false);
     }
@@ -1190,13 +1241,13 @@ function App() {
             return (
               <div className="code-block">
                 <div className="code-block-toolbar">
-                  <span>{language || "code"}</span>
+                  <span>{language || t("label.code")}</span>
                   <button
                     type="button"
                     className="message-icon-button"
                     onClick={() => void handleCopyCode(codeId, codeText)}
-                    aria-label="Copy code block"
-                    title={copiedCodeId === codeId ? "Copied" : "Copy code"}
+                    aria-label={t("aria.copy_code_block")}
+                    title={copiedCodeId === codeId ? t("button.copied") : t("aria.copy_code")}
                   >
                     <Copy size={14} />
                   </button>
@@ -1270,8 +1321,8 @@ function App() {
                   setArchiveTarget(entry);
                   setIncludeEnvInArchive(false);
                 }}
-                aria-label={`Download ${entry.name} as zip`}
-                title="Download zip"
+                aria-label={t("aria.download_zip", { name: entry.name })}
+                title={t("button.download_zip")}
               >
                 <Download size={14} />
               </button>
@@ -1299,7 +1350,7 @@ function App() {
 
             <div className="conversation-attachment-copy">
               <strong>{attachment.name}</strong>
-              <span>{attachment.mimeType || "Image"}</span>
+              <span>{attachment.mimeType || t("label.image")}</span>
             </div>
 
             <a
@@ -1308,7 +1359,7 @@ function App() {
               target="_blank"
               rel="noreferrer"
             >
-              Open
+              {t("button.open")}
             </a>
           </article>
         ))}
@@ -1348,10 +1399,10 @@ function App() {
       );
       setCurrentThread(data.thread);
       setSessions(data.sessions);
-      notifySuccess(`Session model changed to ${model}.`);
+      notifySuccess(t("notify.model_changed", { model }));
       setIsModelOverlayOpen(false);
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to change the session model.");
+      setError(nextError instanceof Error ? nextError.message : t("error.change_model"));
     } finally {
       setIsModelSaving(false);
     }
@@ -1372,10 +1423,10 @@ function App() {
       if (restart) {
         await bootstrap();
       }
-      notifySuccess(restart ? "Config saved and Codex relaunched." : "Config saved.");
+      notifySuccess(restart ? t("notify.config_saved_relaunched") : t("notify.config_saved"));
       setIsConfigOpen(false);
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to save Codex config.");
+      setError(nextError instanceof Error ? nextError.message : t("error.save_config"));
     } finally {
       setIsConfigSaving(false);
     }
@@ -1402,7 +1453,9 @@ function App() {
   }
 
   async function handleDeleteSession(session: SessionSummary) {
-    const confirmed = window.confirm(`Delete session "${deriveSessionTitle(session)}" ?`);
+    const confirmed = window.confirm(
+      t("confirm.delete_session", { title: deriveSessionTitle(session, t("session.untitled")) })
+    );
     if (!confirmed) {
       return;
     }
@@ -1426,7 +1479,7 @@ function App() {
 
       setError(null);
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to delete this session.");
+      setError(nextError instanceof Error ? nextError.message : t("error.delete_session"));
     } finally {
       setDeletingSessionId(null);
     }
@@ -1454,19 +1507,19 @@ function App() {
           </div>
           <div>
             <p>Codex UI</p>
-            <span>Local sessions</span>
+            <span>{t("brand.subtitle")}</span>
           </div>
         </div>
 
         <div className="topbar-actions">
-          <div className="topbar-nav" aria-label="App pages">
+          <div className="topbar-nav" aria-label={t("aria.app_pages")}>
             <button
               type="button"
               className={`ghost-button nav-button ${activePage === "chat" ? "active" : ""}`}
               onClick={() => handlePageChange("chat")}
             >
               <MessagesSquare size={16} />
-              Chat
+              {t("nav.chat")}
             </button>
             <button
               type="button"
@@ -1474,19 +1527,33 @@ function App() {
               onClick={() => handlePageChange("files")}
             >
               <FilesIcon size={16} />
-              Files
+              {t("nav.files")}
             </button>
           </div>
 
           <button className="ghost-button" type="button" onClick={() => void handleOpenConfig()}>
             <Settings2 size={16} />
-            Configs
+            {t("nav.configs")}
           </button>
 
           <button className="ghost-button" type="button" onClick={() => setIsSessionsOverlayOpen(true)}>
             <FolderOpen size={16} />
-            Sessions
+            {t("nav.sessions")}
           </button>
+
+          <label className="theme-switcher">
+            <span>{t("language.label")}</span>
+            <select
+              value={language}
+              onChange={(event) => {
+                setLanguage(event.target.value as Locale);
+                event.target.blur();
+              }}
+            >
+              <option value="fr">{t("language.fr")}</option>
+              <option value="en">{t("language.en")}</option>
+            </select>
+          </label>
 
           <label className="theme-switcher">
             <Palette size={16} />
@@ -1499,7 +1566,7 @@ function App() {
             >
               {THEMES.map((entry) => (
                 <option key={entry.id} value={entry.id}>
-                  {entry.label}
+                  {t(entry.label)}
                 </option>
               ))}
             </select>
@@ -1507,7 +1574,7 @@ function App() {
 
           <button className="ghost-button" type="button" onClick={() => void handleRefresh()} disabled={isRefreshing}>
             <RefreshCw size={16} />
-            {isRefreshing ? "Refreshing..." : "Refresh"}
+            {isRefreshing ? t("nav.refreshing") : t("nav.refresh")}
           </button>
         </div>
       </nav>
@@ -1518,7 +1585,7 @@ function App() {
           <div className="section-head section-head-compact tight">
             <div className="panel-title">
               <MessagesSquare size={15} />
-              <h2>Conversation</h2>
+              <h2>{t("section.conversation")}</h2>
             </div>
             <button
               type="button"
@@ -1527,7 +1594,7 @@ function App() {
               disabled={!activityMessages.length}
             >
               <Activity size={15} />
-              Activity
+              {t("section.activity")}
             </button>
           </div>
 
@@ -1535,7 +1602,7 @@ function App() {
             {isLoading ? (
               <div className="empty-state">
                 <LoaderCircle size={18} className="spin" />
-                <p>Loading Codex sessions...</p>
+                <p>{t("empty.loading_sessions")}</p>
               </div>
             ) : currentThread ? (
               conversationMessages.length ? (
@@ -1544,7 +1611,7 @@ function App() {
                     <div className="message-head">
                       <strong className="message-title">
                         {messageIdentityIcon(entry.role)}
-                        <span>{entry.title}</span>
+                        <span>{localizeKnownUiText(entry.title, t)}</span>
                       </strong>
                       <div className="message-toolbar">
                         {isExpandable(entry.text) ? (
@@ -1552,7 +1619,7 @@ function App() {
                             type="button"
                             className="message-icon-button"
                             onClick={() => toggleMessageExpanded(entry.id)}
-                            aria-label={expandedMessages[entry.id] ? "Collapse message" : "Expand message"}
+                            aria-label={expandedMessages[entry.id] ? t("aria.collapse_message") : t("aria.expand_message")}
                           >
                             {expandedMessages[entry.id] ? <Minimize2 size={14} /> : <Expand size={14} />}
                           </button>
@@ -1561,8 +1628,8 @@ function App() {
                           type="button"
                           className="message-icon-button"
                           onClick={() => void handleCopyMessage(entry.id, entry.text)}
-                          aria-label="Copy message"
-                          title={copiedMessageId === entry.id ? "Copied" : "Copy"}
+                          aria-label={t("aria.copy_message")}
+                          title={copiedMessageId === entry.id ? t("button.copied") : t("button.copy")}
                         >
                           <Copy size={14} />
                         </button>
@@ -1577,13 +1644,13 @@ function App() {
               ) : (
                 <div className="empty-state">
                   <MessageSquareMore size={22} />
-                  <p>No messages yet. Start by posting a prompt on the right.</p>
+                  <p>{t("empty.no_messages")}</p>
                 </div>
               )
             ) : (
               <div className="empty-state">
                 <Plus size={22} />
-                <p>Create or load a session to start.</p>
+                <p>{t("empty.no_session")}</p>
               </div>
             )}
           </div>
@@ -1595,7 +1662,7 @@ function App() {
               <div className="section-head section-head-compact tight">
                 <div className="panel-title">
                   <FolderKanban size={15} />
-                  <h2>Sessions</h2>
+                  <h2>{t("section.sessions")}</h2>
                 </div>
                 <div className="session-head-meta">
                   {selectedSessionModel ? (
@@ -1608,7 +1675,7 @@ function App() {
                       {selectedSessionModel}
                     </button>
                   ) : null}
-                  <span className="meta-tag">{visibleConversationCount} msgs</span>
+                  <span className="meta-tag">{t("label.msg_count", { count: visibleConversationCount })}</span>
                 </div>
               </div>
 
@@ -1623,11 +1690,11 @@ function App() {
                     }}
                   >
                     <option value="" disabled>
-                      Select a session
+                      {t("input.select_session")}
                     </option>
                     {sessions.map((entry) => (
                       <option key={entry.id} value={entry.id}>
-                        {formatSessionDate(entry.updatedAt)} - {deriveSessionTitle(entry)}
+                        {formatSessionDate(entry.updatedAt, language)} - {deriveSessionTitle(entry, t("session.untitled"))}
                       </option>
                     ))}
                   </select>
@@ -1637,7 +1704,7 @@ function App() {
                   type="button"
                   className="solid-button icon-button"
                   onClick={() => setIsCreateModalOpen(true)}
-                  aria-label="Create a new session"
+                  aria-label={t("aria.create_session")}
                 >
                   <Plus size={16} />
                 </button>
@@ -1648,7 +1715,7 @@ function App() {
               <div className="section-head section-head-compact tight">
                 <div className="panel-title">
                   <SquarePen size={15} />
-                  <h2>Composer</h2>
+                  <h2>{t("section.composer")}</h2>
                 </div>
                 <button
                   type="button"
@@ -1656,7 +1723,7 @@ function App() {
                   onClick={() => setIsQuickPromptsOpen(true)}
                 >
                   <MessageSquareMore size={15} />
-                  Quick prompts
+                  {t("button.quick_prompts")}
                 </button>
               </div>
 
@@ -1674,7 +1741,7 @@ function App() {
                 <textarea
                   value={message}
                   onChange={(event) => setMessage(event.target.value)}
-                  placeholder="Post a message to the active Codex session..."
+                  placeholder={t("input.post_message")}
                   disabled={!currentThread}
                 />
                 <div className="composer-actions">
@@ -1685,7 +1752,7 @@ function App() {
                     disabled={!currentThread || (!currentThread.currentTurnId && !isBusy)}
                   >
                     <CircleStop size={15} />
-                    Stop
+                    {t("button.stop")}
                   </button>
 
                   <button
@@ -1699,7 +1766,7 @@ function App() {
                     }}
                   >
                     <Image size={15} />
-                    {isUploadingAttachments ? "Adding..." : "Attach"}
+                    {isUploadingAttachments ? t("button.add_images") : t("button.attach")}
                     {pendingAttachments.length ? <span className="attach-badge">{pendingAttachments.length}</span> : null}
                   </button>
 
@@ -1710,7 +1777,7 @@ function App() {
                     disabled={!message && !pendingAttachments.length}
                   >
                     <Eraser size={15} />
-                    Clear
+                    {t("button.clear")}
                   </button>
 
                   <button
@@ -1719,7 +1786,7 @@ function App() {
                     disabled={!currentThread || isPosting || (!message.trim() && !pendingAttachments.length)}
                   >
                     <SendHorizonal size={16} />
-                    {isPosting ? "Sending..." : "Send"}
+                    {isPosting ? t("button.sending") : t("button.send")}
                   </button>
                 </div>
               </form>
@@ -1729,7 +1796,7 @@ function App() {
               <div className="section-head section-head-compact tight">
                 <div className="panel-title">
                   <Gauge size={15} />
-                  <h2>Quota</h2>
+                  <h2>{t("section.quota")}</h2>
                 </div>
                 <span className="meta-tag">{account?.planLabel ?? "..."}</span>
               </div>
@@ -1737,19 +1804,19 @@ function App() {
               <div className="quota-row">
                 <div className="quota-pill">
                   <span>5h</span>
-                  <strong className="account-value-ok">{account?.remaining5hLabel ?? "Loading..."}</strong>
+                  <strong className="account-value-ok">{account?.remaining5hLabel ?? t("label.loading")}</strong>
                 </div>
                 <div className="quota-pill">
-                  <span>reset</span>
-                  <strong>{account?.reset5hLabel ?? "Loading..."}</strong>
+                  <span>{t("label.reset")}</span>
+                  <strong>{account?.reset5hLabel ?? t("label.loading")}</strong>
                 </div>
                 <div className="quota-pill">
                   <span>7d</span>
-                  <strong className="account-value-ok">{account?.remaining7dLabel ?? "Loading..."}</strong>
+                  <strong className="account-value-ok">{account?.remaining7dLabel ?? t("label.loading")}</strong>
                 </div>
                 <div className="quota-pill">
-                  <span>reset</span>
-                  <strong>{account?.reset7dLabel ?? "Loading..."}</strong>
+                  <span>{t("label.reset")}</span>
+                  <strong>{account?.reset7dLabel ?? t("label.loading")}</strong>
                 </div>
               </div>
             </section>
@@ -1757,8 +1824,8 @@ function App() {
             <section className="sidebar-panel sidebar-status-panel">
               <div className={`status-pill status-${currentThread?.liveStatus.tone ?? "idle"}`}>
                 {isBusy ? <LoaderCircle size={16} className="spin" /> : <SquarePen size={15} />}
-                <strong>{currentThread?.liveStatus.label ?? "Ready"}</strong>
-                <span>{currentThread?.liveStatus.detail ?? "Select or create a session."}</span>
+                <strong>{localizedLiveStatusLabel}</strong>
+                <span>{localizedLiveStatusDetail}</span>
               </div>
             </section>
 
@@ -1771,14 +1838,14 @@ function App() {
             <div className="section-head section-head-compact tight">
               <div className="panel-title">
                 <FileText size={15} />
-                <h2>Viewer</h2>
+                <h2>{t("section.viewer")}</h2>
               </div>
               <span className="meta-tag">{projectLabel(selectedFilePath)}</span>
             </div>
 
             <div className="file-viewer-panel">
               <div className="file-viewer-meta">
-                <strong>{selectedFileName}</strong>
+                <strong>{selectedFileName || t("label.no_file_selected")}</strong>
                 <button
                   type="button"
                   className="ghost-button subtle"
@@ -1786,21 +1853,21 @@ function App() {
                   disabled={!selectedFilePath || !selectedFileContent}
                 >
                   <Copy size={15} />
-                  {isFileContentCopied ? "Copied" : "Copy"}
+                  {isFileContentCopied ? t("button.copied") : t("button.copy")}
                 </button>
               </div>
 
               {isFileContentLoading ? (
                 <div className="empty-state">
                   <LoaderCircle size={18} className="spin" />
-                  <p>Loading file...</p>
+                  <p>{t("empty.loading_file")}</p>
                 </div>
               ) : selectedFilePath ? (
                 <pre className="file-viewer-content">{selectedFileContent}</pre>
               ) : (
                 <div className="empty-state">
                   <FilesIcon size={22} />
-                  <p>Select a file from the tree to preview it.</p>
+                  <p>{t("empty.select_file")}</p>
                 </div>
               )}
             </div>
@@ -1811,7 +1878,7 @@ function App() {
               <div className="section-head section-head-compact tight">
                 <div className="panel-title">
                   <FolderKanban size={15} />
-                  <h2>Projects</h2>
+                  <h2>{t("section.projects")}</h2>
                 </div>
                 <span className="meta-tag">/projects</span>
               </div>
@@ -1820,7 +1887,7 @@ function App() {
                 {isFileTreeLoading ? (
                   <div className="empty-state compact-empty">
                     <LoaderCircle size={18} className="spin" />
-                    <p>Loading file tree...</p>
+                    <p>{t("empty.loading_tree")}</p>
                   </div>
                 ) : (
                   renderFileTree()
@@ -1835,20 +1902,18 @@ function App() {
         <div className="modal-backdrop" onClick={() => setArchiveTarget(null)}>
           <section className="modal-card" onClick={(event) => event.stopPropagation()}>
             <div className="modal-head">
-              <h3>Download folder as zip</h3>
+              <h3>{t("modal.archive_title")}</h3>
               <button
                 type="button"
                 className="ghost-button subtle icon-button"
                 onClick={() => setArchiveTarget(null)}
-                aria-label="Close archive modal"
+                aria-label={t("aria.close_archive_modal")}
               >
                 <CircleX size={16} />
               </button>
             </div>
 
-            <p className="modal-copy">
-              Download <strong>{archiveTarget.name}</strong> as a zip archive. `node_modules` is always excluded.
-            </p>
+            <p className="modal-copy">{t("modal.archive_copy", { name: archiveTarget.name })}</p>
 
             <label className="archive-checkbox">
               <input
@@ -1856,7 +1921,7 @@ function App() {
                 checked={includeEnvInArchive}
                 onChange={(event) => setIncludeEnvInArchive(event.target.checked)}
               />
-              <span>Include `.env` files in the zip</span>
+              <span>{t("modal.include_env")}</span>
             </label>
 
             <div className="modal-actions">
@@ -1866,7 +1931,7 @@ function App() {
                 onClick={() => setArchiveTarget(null)}
                 disabled={isArchiveDownloading}
               >
-                Cancel
+                {t("button.cancel")}
               </button>
               <button
                 type="button"
@@ -1875,7 +1940,7 @@ function App() {
                 disabled={isArchiveDownloading}
               >
                 <Download size={16} />
-                {isArchiveDownloading ? "Preparing..." : "Download zip"}
+                {isArchiveDownloading ? t("button.preparing") : t("button.download_zip")}
               </button>
             </div>
           </section>
@@ -1883,7 +1948,7 @@ function App() {
       ) : null}
 
       {notifications.length ? (
-        <div className="notification-stack" aria-live="polite" aria-label="Notifications">
+        <div className="notification-stack" aria-live="polite" aria-label={t("aria.notifications")}>
           {notifications.map((notification) => (
             <article key={notification.id} className={`notification-card notification-${notification.kind}`}>
               <div className="notification-icon">{notificationIcon(notification.kind)}</div>
@@ -1892,7 +1957,7 @@ function App() {
                 type="button"
                 className="message-icon-button"
                 onClick={() => dismissNotification(notification.id)}
-                aria-label="Dismiss notification"
+                aria-label={t("aria.dismiss_notification")}
               >
                 <CircleX size={14} />
               </button>
@@ -1905,20 +1970,18 @@ function App() {
         <div className="modal-backdrop" onClick={() => setIsImageOverlayOpen(false)}>
           <section className="modal-card modal-card-wide" onClick={(event) => event.stopPropagation()}>
             <div className="modal-head">
-              <h3>Attached images</h3>
+              <h3>{t("modal.images_title")}</h3>
               <button
                 type="button"
                 className="ghost-button subtle icon-button"
                 onClick={() => setIsImageOverlayOpen(false)}
-                aria-label="Close image overlay"
+                aria-label={t("aria.close_images_modal")}
               >
                 <CircleX size={16} />
               </button>
             </div>
 
-            <p className="modal-copy">
-              Review the images attached to the next message. You can remove any image before sending.
-            </p>
+            <p className="modal-copy">{t("modal.images_copy")}</p>
 
             <div className="modal-actions">
               <label
@@ -1931,7 +1994,7 @@ function App() {
                 }}
               >
                 <Image size={15} />
-                {isUploadingAttachments ? "Adding..." : "Add images"}
+                {isUploadingAttachments ? t("button.add_images") : t("button.add_images")}
               </label>
             </div>
 
@@ -1942,13 +2005,13 @@ function App() {
                     <img src={attachment.previewUrl ?? attachment.path} alt={attachment.name} className="attachment-preview" />
                     <div className="attachment-copy">
                       <strong>{attachment.name}</strong>
-                      <span>Image</span>
+                      <span>{t("label.image")}</span>
                     </div>
                     <button
                       type="button"
                       className="message-icon-button"
                       onClick={() => handleRemoveAttachment(attachment.id)}
-                      aria-label={`Remove ${attachment.name}`}
+                      aria-label={t("aria.remove_image", { name: attachment.name })}
                     >
                       <CircleX size={14} />
                     </button>
@@ -1956,7 +2019,7 @@ function App() {
                 ))
               ) : (
                 <div className="empty-state compact-empty">
-                  <p>No images attached.</p>
+                  <p>{t("empty.no_images")}</p>
                 </div>
               )}
             </div>
@@ -1968,26 +2031,24 @@ function App() {
         <div className="modal-backdrop" onClick={() => setIsModelOverlayOpen(false)}>
           <section className="modal-card modal-card-wide" onClick={(event) => event.stopPropagation()}>
             <div className="modal-head">
-              <h3>Session model</h3>
+              <h3>{t("modal.model_title")}</h3>
               <button
                 type="button"
                 className="ghost-button subtle icon-button"
                 onClick={() => setIsModelOverlayOpen(false)}
-                aria-label="Close model overlay"
+                aria-label={t("aria.close_model_modal")}
               >
                 <CircleX size={16} />
               </button>
             </div>
 
-            <p className="modal-copy">
-              Choose the model used for the current session. The selection will be reused for the next turns.
-            </p>
+            <p className="modal-copy">{t("modal.model_copy")}</p>
 
             <div className="model-list">
               {isModelsLoading ? (
                 <div className="empty-state compact-empty">
                   <LoaderCircle size={18} className="spin" />
-                  <p>Loading models...</p>
+                  <p>{t("empty.loading_models")}</p>
                 </div>
               ) : availableModels.length ? (
                 availableModels.map((entry) => {
@@ -2005,7 +2066,7 @@ function App() {
                         <span>{entry.description}</span>
                       </div>
                       <div className="model-option-meta">
-                        {entry.isDefault ? <span className="meta-tag">Default</span> : null}
+                        {entry.isDefault ? <span className="meta-tag">{t("label.default")}</span> : null}
                         <span className="meta-tag">{entry.model}</span>
                       </div>
                     </button>
@@ -2013,7 +2074,7 @@ function App() {
                 })
               ) : (
                 <div className="empty-state compact-empty">
-                  <p>No models available.</p>
+                  <p>{t("empty.no_models")}</p>
                 </div>
               )}
             </div>
@@ -2031,7 +2092,7 @@ function App() {
         >
           <section className="modal-card modal-card-wide quick-prompts-modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-head">
-              <h3>Quick prompts</h3>
+              <h3>{t("modal.quick_prompts_title")}</h3>
               <button
                 type="button"
                 className="ghost-button subtle icon-button"
@@ -2039,15 +2100,13 @@ function App() {
                   setIsQuickPromptsOpen(false);
                   resetQuickPromptEditor();
                 }}
-                aria-label="Close modal"
+                aria-label={t("aria.close_quick_prompts_modal")}
               >
                 <CircleX size={16} />
               </button>
             </div>
 
-            <p className="modal-copy">
-              Create reusable messages, insert them into the composer, or send them immediately.
-            </p>
+            <p className="modal-copy">{t("modal.quick_prompts_copy")}</p>
 
             <div className="quick-prompts-layout">
               <div className="quick-prompts-list">
@@ -2064,7 +2123,7 @@ function App() {
                         className="ghost-button subtle icon-button"
                         onClick={() => handleMoveQuickPrompt(prompt.id, -1)}
                         disabled={index === 0}
-                        aria-label={`Move ${prompt.title} up`}
+                        aria-label={t("aria.move_prompt_up", { title: prompt.title })}
                       >
                         <ArrowUp size={15} />
                       </button>
@@ -2073,7 +2132,7 @@ function App() {
                         className="ghost-button subtle icon-button"
                         onClick={() => handleMoveQuickPrompt(prompt.id, 1)}
                         disabled={index === quickPrompts.length - 1}
-                        aria-label={`Move ${prompt.title} down`}
+                        aria-label={t("aria.move_prompt_down", { title: prompt.title })}
                       >
                         <ArrowDown size={15} />
                       </button>
@@ -2082,7 +2141,7 @@ function App() {
                         className="ghost-button subtle"
                         onClick={() => handleInsertQuickPrompt(prompt.content)}
                       >
-                        Insert
+                        {t("button.insert")}
                       </button>
                       <button
                         type="button"
@@ -2090,21 +2149,21 @@ function App() {
                         onClick={() => void handleSendQuickPrompt(prompt.content)}
                         disabled={!currentThread || isPosting}
                       >
-                        Send now
+                        {t("button.send_now")}
                       </button>
                       <button
                         type="button"
                         className="ghost-button subtle"
                         onClick={() => handleEditQuickPrompt(prompt)}
                       >
-                        Edit
+                        {t("button.edit")}
                       </button>
                       <button
                         type="button"
                         className="ghost-button subtle danger"
                         onClick={() => handleDeleteQuickPrompt(prompt.id)}
                       >
-                        Delete
+                        {t("button.delete")}
                       </button>
                     </div>
                   </article>
@@ -2112,7 +2171,7 @@ function App() {
 
                 {!quickPrompts.length ? (
                   <div className="empty-state compact-empty">
-                    <p>No quick prompts yet.</p>
+                    <p>{t("empty.no_quick_prompts")}</p>
                   </div>
                 ) : null}
               </div>
@@ -2121,27 +2180,27 @@ function App() {
                 <div className="section-head section-head-compact tight">
                   <div className="panel-title">
                     <Sparkles size={15} />
-                    <h2>{editingQuickPromptId ? "Edit prompt" : "New prompt"}</h2>
+                    <h2>{editingQuickPromptId ? t("quick_prompt.edit") : t("quick_prompt.new")}</h2>
                   </div>
                 </div>
 
                 <input
                   value={quickPromptTitle}
                   onChange={(event) => setQuickPromptTitle(event.target.value)}
-                  placeholder="Title"
+                  placeholder={t("input.prompt_title")}
                 />
                 <textarea
                   className="quick-prompt-textarea"
                   value={quickPromptContent}
                   onChange={(event) => setQuickPromptContent(event.target.value)}
-                  placeholder="Message content"
+                  placeholder={t("input.prompt_content")}
                 />
                 <div className="modal-actions">
                   <button type="button" className="ghost-button subtle" onClick={resetQuickPromptEditor}>
-                    Clear
+                    {t("quick_prompt.clear")}
                   </button>
                   <button type="button" className="solid-button" onClick={handleSaveQuickPrompt}>
-                    {editingQuickPromptId ? "Save changes" : "Add prompt"}
+                    {editingQuickPromptId ? t("quick_prompt.save_changes") : t("quick_prompt.add")}
                   </button>
                 </div>
               </div>
@@ -2154,32 +2213,30 @@ function App() {
         <div className="modal-backdrop" onClick={() => setIsCreateModalOpen(false)}>
           <section className="modal-card" onClick={(event) => event.stopPropagation()}>
             <div className="modal-head">
-              <h3>New session</h3>
+              <h3>{t("modal.new_session_title")}</h3>
               <button
                 type="button"
                 className="ghost-button subtle icon-button"
                 onClick={() => setIsCreateModalOpen(false)}
-                aria-label="Close modal"
+                aria-label={t("aria.close_create_session_modal")}
               >
                 <CircleX size={16} />
               </button>
             </div>
 
-            <p className="modal-copy">
-              Leave the title empty to use an excerpt of the first user message automatically.
-            </p>
+            <p className="modal-copy">{t("modal.new_session_copy")}</p>
 
             <input
               value={newSessionName}
               onChange={(event) => setNewSessionName(event.target.value)}
-              placeholder="Session title"
+              placeholder={t("input.session_title")}
               autoFocus
             />
 
             <input
               value={newSessionPath}
               onChange={(event) => setNewSessionPath(event.target.value)}
-              placeholder="/projects/my-workspace"
+              placeholder={t("input.workspace_path")}
             />
 
             <div className="modal-actions">
@@ -2188,7 +2245,7 @@ function App() {
                 className="ghost-button subtle"
                 onClick={() => setIsCreateModalOpen(false)}
               >
-                Cancel
+                {t("button.cancel")}
               </button>
               <button
                 type="button"
@@ -2197,7 +2254,7 @@ function App() {
                 disabled={isCreating}
               >
                 <Plus size={16} />
-                {isCreating ? "Creating..." : "Create"}
+                {isCreating ? t("button.creating") : t("button.create")}
               </button>
             </div>
           </section>
@@ -2208,12 +2265,12 @@ function App() {
         <div className="modal-backdrop" onClick={() => setIsSessionsOverlayOpen(false)}>
           <section className="modal-card modal-card-wide" onClick={(event) => event.stopPropagation()}>
             <div className="modal-head">
-              <h3>Manage sessions</h3>
+              <h3>{t("modal.sessions_title")}</h3>
               <button
                 type="button"
                 className="ghost-button subtle icon-button"
                 onClick={() => setIsSessionsOverlayOpen(false)}
-                aria-label="Close sessions overlay"
+                aria-label={t("aria.close_sessions_modal")}
               >
                 <CircleX size={16} />
               </button>
@@ -2224,9 +2281,9 @@ function App() {
                 sessions.map((entry) => (
                   <article key={entry.id} className="session-admin-row">
                     <div className="session-admin-copy">
-                      <strong>{deriveSessionTitle(entry)}</strong>
+                      <strong>{deriveSessionTitle(entry, t("session.untitled"))}</strong>
                       <span>
-                        {formatSessionDate(entry.updatedAt)} · {entry.cwd}
+                        {formatSessionDate(entry.updatedAt, language)} · {entry.cwd}
                       </span>
                     </div>
                     <button
@@ -2236,13 +2293,13 @@ function App() {
                       disabled={deletingSessionId === entry.id}
                     >
                       <Trash2 size={15} />
-                      {deletingSessionId === entry.id ? "Deleting..." : "Delete"}
+                      {deletingSessionId === entry.id ? t("button.deleting") : t("button.delete")}
                     </button>
                   </article>
                 ))
               ) : (
                 <div className="empty-state compact-empty">
-                  <p>No sessions available.</p>
+                  <p>{t("empty.no_sessions")}</p>
                 </div>
               )}
             </div>
@@ -2254,12 +2311,12 @@ function App() {
         <div className="modal-backdrop" onClick={() => setIsActivityOpen(false)}>
           <section className="modal-card modal-card-wide" onClick={(event) => event.stopPropagation()}>
             <div className="modal-head">
-              <h3>Activity</h3>
+              <h3>{t("modal.activity_title")}</h3>
               <button
                 type="button"
                 className="ghost-button subtle icon-button"
                 onClick={() => setIsActivityOpen(false)}
-                aria-label="Close activity overlay"
+                aria-label={t("aria.close_activity_modal")}
               >
                 <CircleX size={16} />
               </button>
@@ -2270,14 +2327,14 @@ function App() {
                 activityMessages.map((entry) => (
                   <article key={entry.id} className="activity-card">
                     <div className="message-head">
-                      <strong>{entry.title}</strong>
+                      <strong>{localizeKnownUiText(entry.title, t)}</strong>
                       <div className="message-toolbar">
                         {isExpandable(entry.text) ? (
                           <button
                             type="button"
                             className="message-icon-button"
                             onClick={() => toggleMessageExpanded(entry.id)}
-                            aria-label={expandedMessages[entry.id] ? "Collapse activity" : "Expand activity"}
+                            aria-label={expandedMessages[entry.id] ? t("aria.collapse_activity") : t("aria.expand_activity")}
                           >
                             {expandedMessages[entry.id] ? <Minimize2 size={14} /> : <Expand size={14} />}
                           </button>
@@ -2286,7 +2343,7 @@ function App() {
                           type="button"
                           className="message-icon-button"
                           onClick={() => void handleCopyMessage(entry.id, entry.text)}
-                          aria-label="Copy activity"
+                          aria-label={t("aria.copy_activity")}
                         >
                           <Copy size={14} />
                         </button>
@@ -2300,7 +2357,7 @@ function App() {
                 ))
               ) : (
                 <div className="empty-state compact-empty">
-                  <p>No activity details for this conversation.</p>
+                  <p>{t("empty.no_activity")}</p>
                 </div>
               )}
             </div>
@@ -2312,12 +2369,12 @@ function App() {
         <div className="modal-backdrop" onClick={() => setIsConfigOpen(false)}>
           <section className="modal-card modal-card-wide" onClick={(event) => event.stopPropagation()}>
             <div className="modal-head">
-              <h3>Codex config</h3>
+              <h3>{t("modal.config_title")}</h3>
               <button
                 type="button"
                 className="ghost-button subtle icon-button"
                 onClick={() => setIsConfigOpen(false)}
-                aria-label="Close config overlay"
+                aria-label={t("aria.close_config_modal")}
               >
                 <CircleX size={16} />
               </button>
@@ -2333,7 +2390,7 @@ function App() {
                 className="ghost-button subtle"
                 onClick={() => setConfigDraft((current) => applyPermissiveCodexPreset(current))}
               >
-                Apply full access preset
+                {t("button.apply_full_access")}
               </button>
             </div>
 
@@ -2351,7 +2408,7 @@ function App() {
                 onClick={() => void handleSaveConfig(false)}
                 disabled={isConfigSaving}
               >
-                Save
+                {t("button.save")}
               </button>
               <button
                 type="button"
@@ -2360,7 +2417,7 @@ function App() {
                 disabled={isConfigSaving}
               >
                 <Settings2 size={16} />
-                {isConfigSaving ? "Saving..." : "Save + Relaunch Codex"}
+                {isConfigSaving ? t("button.saving") : t("button.save_relaunch")}
               </button>
             </div>
           </section>
