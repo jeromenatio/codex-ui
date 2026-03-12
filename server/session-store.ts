@@ -275,13 +275,21 @@ export class SessionStore {
     return [...this.summaries.values()].sort((left, right) => right.updatedAt - left.updatedAt);
   }
 
+  upsertDetail(detail: SessionDetail) {
+    this.details.set(detail.summary.id, detail);
+    this.summaries.set(detail.summary.id, detail.summary);
+    return detail;
+  }
+
   setSummaries(threads: Thread[]) {
     const nextIds = new Set(threads.map((thread) => thread.id));
 
     for (const existingId of this.summaries.keys()) {
       if (!nextIds.has(existingId)) {
-        this.summaries.delete(existingId);
-        this.details.delete(existingId);
+        const existingDetail = this.details.get(existingId);
+        if (!existingDetail) {
+          this.summaries.delete(existingId);
+        }
       }
     }
 

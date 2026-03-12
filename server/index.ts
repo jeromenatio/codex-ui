@@ -73,6 +73,7 @@ function toProjectRelativePath(targetPath: string) {
 }
 
 async function readDirectoryTree(input?: string | null) {
+  await fs.mkdir(projectsRoot, { recursive: true });
   const absolutePath = resolveProjectsPath(input);
   const stats = await fs.stat(absolutePath);
   if (!stats.isDirectory()) {
@@ -130,6 +131,7 @@ async function readProjectFile(input?: string | null) {
 }
 
 async function createProjectArchive(input?: string | null, includeEnv = false) {
+  await fs.mkdir(projectsRoot, { recursive: true });
   const absolutePath = resolveProjectsPath(input);
   const stats = await fs.stat(absolutePath);
   if (!stats.isDirectory()) {
@@ -478,7 +480,7 @@ function detailFromStore(threadId: string): SessionDetail | null {
   return store.getDetail(threadId);
 }
 
-async function getAccountInfo(currentThreadId?: string | null): Promise<AccountInfo> {
+async function getAccountInfo(currentThreadId?: string | null, locale = "en"): Promise<AccountInfo> {
   const fallbackStatus = await execFileAsync("codex", ["login", "status"], {
     cwd: rootDir,
     env: process.env
@@ -525,16 +527,21 @@ async function getAccountInfo(currentThreadId?: string | null): Promise<AccountI
     windows.find((entry) => Math.abs((entry.windowDurationMins ?? 0) - targetMinutes) <= 1) ??
     null;
 
-  const toRemainingLabel = (usedPercent?: number) =>
-    typeof usedPercent === "number" ? `${Math.max(0, 100 - usedPercent)}% left` : "Unavailable";
+  const toRemainingLabel = (usedPercent?: number) => {
+    if (typeof usedPercent !== "number") {
+      return locale === "fr" ? "Indisponible" : "Unavailable";
+    }
+
+    return locale === "fr" ? `${Math.max(0, 100 - usedPercent)}% restant` : `${Math.max(0, 100 - usedPercent)}% left`;
+  };
 
   const toResetLabel = (timestamp?: number | null) => {
     if (!timestamp) {
-      return "Unavailable";
+      return locale === "fr" ? "Indisponible" : "Unavailable";
     }
 
     const millis = timestamp > 1_000_000_000_000 ? timestamp : timestamp * 1000;
-    return new Intl.DateTimeFormat("fr-FR", {
+    return new Intl.DateTimeFormat(locale === "fr" ? "fr-FR" : "en-US", {
       day: "2-digit",
       month: "2-digit",
       hour: "2-digit",
@@ -753,9 +760,12 @@ app.get("/api/bootstrap", async (request, response) => {
 });
 
 app.get("/api/account", async (request, response) => {
-  await listThreads();
+  await listThreads().catch(() => {
+    return;
+  });
   const threadId = typeof request.query.threadId === "string" ? request.query.threadId : null;
-  response.json({ account: await getAccountInfo(threadId) });
+  const locale = typeof request.query.locale === "string" ? request.query.locale : "en";
+  response.json({ account: await getAccountInfo(threadId, locale) });
 });
 
 app.get("/api/config", async (_request, response) => {
@@ -874,6 +884,7 @@ app.post("/api/config", async (request, response) => {
     return;
   }
 
+  await fs.mkdir(path.dirname(codexConfigPath), { recursive: true });
   await fs.writeFile(codexConfigPath, content, "utf8");
 
   if (restart) {
@@ -934,6 +945,7 @@ app.post("/api/sessions", async (request, response) => {
   const cwd = typeof request.body?.cwd === "string" ? request.body.cwd.trim() : "";
   const detail = await createThread(name || null, cwd || null);
   await listThreads();
+  store.upsertDetail(detail);
   broadcast("sessions", store.getSummaries());
   broadcast("thread", detail);
   response.status(201).json({ thread: detail });
@@ -1076,8 +1088,15 @@ app.get("/{*path}", (_request, response) => {
 const port = Number(process.env.PORT ?? 3001);
 
 async function start() {
-  await codex.start();
-  await listThreads();
+  await fs.mkdir(projectsRoot, { recursive: true }).catch(() => {
+    return;
+  });
+  await codex.start().catch((error) => {
+    console.error("Codex start failed:", error);
+  });
+  await listThreads().catch((error) => {
+    console.error("Initial thread sync failed:", error);
+  });
 
   app.listen(port, () => {
     console.log(`Codex UI server listening on http://127.0.0.1:${port}`);

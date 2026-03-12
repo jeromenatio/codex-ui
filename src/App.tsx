@@ -34,6 +34,7 @@ import {
   MessageSquareMore,
   Palette,
   Plus,
+  RefreshCw,
   SendHorizonal,
   Settings2,
   Shield,
@@ -458,7 +459,6 @@ function App() {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
   const [account, setAccount] = useState<AccountInfo | null>(null);
-  const [configDraft, setConfigDraft] = useState("");
   const [configForm, setConfigForm] = useState<ConfigFormState>(() => defaultConfigForm());
   const [configPath, setConfigPath] = useState("");
   const [isConfigOpen, setIsConfigOpen] = useState(false);
@@ -672,15 +672,19 @@ function App() {
     setSessions(data.sessions);
   }
 
-  async function refreshAccount(threadId?: string | null) {
-    const search = threadId ? `?threadId=${encodeURIComponent(threadId)}` : "";
-    const data = await fetchJson<{ account: AccountInfo }>(`/api/account${search}`);
+  async function refreshAccount(threadId?: string | null, locale = language) {
+    const search = new URLSearchParams();
+    if (threadId) {
+      search.set("threadId", threadId);
+    }
+    search.set("locale", locale);
+    const query = search.toString();
+    const data = await fetchJson<{ account: AccountInfo }>(`/api/account${query ? `?${query}` : ""}`);
     setAccount(data.account);
   }
 
   async function refreshConfig() {
     const data = await fetchJson<{ config: CodexConfigInfo }>("/api/config");
-    setConfigDraft(data.config.content);
     setConfigForm(parseConfigForm(data.config.content));
     setConfigPath(data.config.path);
   }
@@ -877,7 +881,7 @@ function App() {
       if (data.selectedThread) {
         localStorage.setItem(THREAD_KEY, data.selectedThread.summary.id);
       }
-      await refreshAccount(data.selectedThread?.summary.id ?? null);
+      await refreshAccount(data.selectedThread?.summary.id ?? null, language);
       setError(null);
     } catch (nextError) {
       try {
@@ -955,7 +959,7 @@ function App() {
 
   useEffect(() => {
     if (!selectedThreadId) {
-      void refreshAccount(null).catch(() => {
+      void refreshAccount(null, language).catch(() => {
         return;
       });
       return;
@@ -965,27 +969,27 @@ function App() {
       void Promise.all([
         loadThread(selectedThreadId, { preserveError: true }),
         refreshSessions(),
-        refreshAccount(selectedThreadId)
+        refreshAccount(selectedThreadId, language)
       ]).catch(() => {
         return;
       });
     }, 5000);
 
     return () => window.clearInterval(interval);
-  }, [selectedThreadId]);
+  }, [language, selectedThreadId]);
 
   useEffect(() => {
-    void refreshAccount(selectedThreadId).catch(() => {
+    void refreshAccount(selectedThreadId, language).catch(() => {
       return;
     });
-  }, [selectedThreadId]);
+  }, [language, selectedThreadId]);
 
   useEffect(() => {
     if (!isCreateModalOpen) {
       return;
     }
 
-    setNewSessionPath((current) => current || currentThread?.summary.cwd || "/projects/codex-ui");
+    setNewSessionPath((current) => current || currentThread?.summary.cwd || "/projects");
   }, [currentThread?.summary.cwd, isCreateModalOpen]);
 
   useEffect(() => {
@@ -1088,10 +1092,16 @@ function App() {
       });
 
       setCurrentThread(data.thread);
+      setSessions((previous) => {
+        const next = previous.some((entry) => entry.id === data.thread.summary.id)
+          ? previous.map((entry) => (entry.id === data.thread.summary.id ? data.thread.summary : entry))
+          : [data.thread.summary, ...previous];
+
+        return [...next].sort((left, right) => right.updatedAt - left.updatedAt);
+      });
       setNewSessionName("");
       setNewSessionPath(data.thread.summary.cwd);
       setIsCreateModalOpen(false);
-      await refreshSessions();
       localStorage.setItem(THREAD_KEY, data.thread.summary.id);
       setError(null);
     } catch (nextError) {
@@ -1675,7 +1685,6 @@ function App() {
           restart
         })
       });
-      setConfigDraft(data.config.content);
       setConfigForm(parseConfigForm(data.config.content));
       setConfigPath(data.config.path);
       if (restart) {
@@ -2089,7 +2098,9 @@ function App() {
                   <strong className="account-value-ok">{account?.remaining5hLabel ?? t("label.loading")}</strong>
                 </div>
                 <div className="quota-pill">
-                  <span>{t("label.reset")}</span>
+                  <span aria-label={t("label.reset")} title={t("label.reset")}>
+                    <RefreshCw size={12} />
+                  </span>
                   <strong>{account?.reset5hLabel ?? t("label.loading")}</strong>
                 </div>
                 <div className="quota-pill">
@@ -2097,7 +2108,9 @@ function App() {
                   <strong className="account-value-ok">{account?.remaining7dLabel ?? t("label.loading")}</strong>
                 </div>
                 <div className="quota-pill">
-                  <span>{t("label.reset")}</span>
+                  <span aria-label={t("label.reset")} title={t("label.reset")}>
+                    <RefreshCw size={12} />
+                  </span>
                   <strong>{account?.reset7dLabel ?? t("label.loading")}</strong>
                 </div>
               </div>
