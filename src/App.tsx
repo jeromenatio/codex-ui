@@ -3,6 +3,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   Activity,
+  AlertTriangle,
+  BadgeCheck,
   Bot,
   ChevronDown,
   ChevronRight,
@@ -32,6 +34,7 @@ import {
   Settings2,
   SquarePen,
   Sparkles,
+  TriangleAlert,
   Trash2,
   UserRound
 } from "lucide-react";
@@ -100,6 +103,26 @@ type FileContentResponse = {
   name: string;
   content: string;
 };
+type NotificationKind = "error" | "warning" | "info" | "success";
+type AppNotification = {
+  id: number;
+  kind: NotificationKind;
+  message: string;
+};
+
+function notificationIcon(kind: NotificationKind) {
+  switch (kind) {
+    case "error":
+      return <CircleX size={15} />;
+    case "warning":
+      return <TriangleAlert size={15} />;
+    case "success":
+      return <BadgeCheck size={15} />;
+    case "info":
+    default:
+      return <AlertTriangle size={15} />;
+  }
+}
 
 function pageFromPathname(pathname: string): AppPage {
   return pathname === "/files" ? "files" : "chat";
@@ -255,10 +278,10 @@ function App() {
   const [message, setMessage] = useState("");
   const [newSessionName, setNewSessionName] = useState("");
   const [newSessionPath, setNewSessionPath] = useState("");
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isPosting, setIsPosting] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [theme, setTheme] = useState<string>(DEFAULT_THEME);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isActivityOpen, setIsActivityOpen] = useState(false);
@@ -289,6 +312,7 @@ function App() {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pendingAutoScrollRef = useRef(false);
   const scrollTimerRef = useRef<number | null>(null);
+  const notificationIdRef = useRef(1);
   const lastScrollStateRef = useRef<{ threadId: string | null; count: number }>({
     threadId: null,
     count: 0
@@ -313,6 +337,40 @@ function App() {
       ) ?? [],
     [currentThread?.messages]
   );
+
+  function notify(kind: NotificationKind, message: string) {
+    const id = notificationIdRef.current++;
+    setNotifications((previous) => [...previous, { id, kind, message }]);
+    window.setTimeout(() => {
+      setNotifications((previous) => previous.filter((entry) => entry.id !== id));
+    }, 4200);
+  }
+
+  function notifyError(message: string) {
+    notify("error", message);
+  }
+
+  function notifyWarning(message: string) {
+    notify("warning", message);
+  }
+
+  function notifyInfo(message: string) {
+    notify("info", message);
+  }
+
+  function notifySuccess(message: string) {
+    notify("success", message);
+  }
+
+  function dismissNotification(notificationId: number) {
+    setNotifications((previous) => previous.filter((entry) => entry.id !== notificationId));
+  }
+
+  function setError(nextError: string | null) {
+    if (nextError) {
+      notifyError(nextError);
+    }
+  }
 
   async function refreshSessions() {
     const data = await fetchJson<{ sessions: SessionSummary[] }>("/api/sessions");
@@ -722,6 +780,7 @@ function App() {
     try {
       await navigator.clipboard.writeText(text);
       setCopiedMessageId(messageId);
+      notifySuccess("Message copied.");
       window.setTimeout(() => {
         setCopiedMessageId((current) => (current === messageId ? null : current));
       }, 1200);
@@ -754,6 +813,7 @@ function App() {
     try {
       await navigator.clipboard.writeText(text);
       setCopiedCodeId(codeId);
+      notifySuccess("Code block copied.");
       window.setTimeout(() => {
         setCopiedCodeId((current) => (current === codeId ? null : current));
       }, 1200);
@@ -770,6 +830,7 @@ function App() {
     try {
       await navigator.clipboard.writeText(selectedFileContent);
       setIsFileContentCopied(true);
+      notifySuccess("File content copied.");
       window.setTimeout(() => {
         setIsFileContentCopied(false);
       }, 1200);
@@ -816,6 +877,7 @@ function App() {
 
       setArchiveTarget(null);
       setIncludeEnvInArchive(false);
+      notifySuccess("Archive download started.");
       setError(null);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Unable to download archive.");
@@ -959,7 +1021,7 @@ function App() {
       if (restart) {
         await bootstrap();
       }
-      setError(null);
+      notifySuccess(restart ? "Config saved and Codex relaunched." : "Config saved.");
       setIsConfigOpen(false);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Unable to save Codex config.");
@@ -1303,7 +1365,6 @@ function App() {
               </div>
             </section>
 
-            {error ? <section className="error-box">{error}</section> : null}
           </div>
         </aside>
         </main>
@@ -1421,6 +1482,25 @@ function App() {
               </button>
             </div>
           </section>
+        </div>
+      ) : null}
+
+      {notifications.length ? (
+        <div className="notification-stack" aria-live="polite" aria-label="Notifications">
+          {notifications.map((notification) => (
+            <article key={notification.id} className={`notification-card notification-${notification.kind}`}>
+              <div className="notification-icon">{notificationIcon(notification.kind)}</div>
+              <p>{notification.message}</p>
+              <button
+                type="button"
+                className="message-icon-button"
+                onClick={() => dismissNotification(notification.id)}
+                aria-label="Dismiss notification"
+              >
+                <CircleX size={14} />
+              </button>
+            </article>
+          ))}
         </div>
       ) : null}
 
