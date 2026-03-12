@@ -365,6 +365,10 @@ function App() {
     count: 0
   });
   const selectedThreadId = currentThread?.summary.id ?? null;
+  const selectedSessionModel =
+    currentThread?.summary.model ??
+    sessions.find((entry) => entry.id === selectedThreadId)?.model ??
+    null;
   const visibleConversationCount =
     currentThread?.messages.filter(
       (entry) => entry.role === "user" || (entry.role === "assistant" && entry.phase !== "commentary")
@@ -1371,7 +1375,10 @@ function App() {
                   <FolderKanban size={15} />
                   <h2>Sessions</h2>
                 </div>
-                <span className="meta-tag">{visibleConversationCount} msgs</span>
+                <div className="session-head-meta">
+                  {selectedSessionModel ? <span className="meta-tag">{selectedSessionModel}</span> : null}
+                  <span className="meta-tag">{visibleConversationCount} msgs</span>
+                </div>
               </div>
 
               <div className="session-picker-row">

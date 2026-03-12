@@ -26,7 +26,7 @@ const codex = new CodexAppClient({ cwd: activeWorkspaceDir });
 const store = new SessionStore();
 const sseClients = new Set<express.Response>();
 
-type ThreadResponse = { thread: Thread };
+type ThreadResponse = { thread: Thread; model?: string };
 type FileTreeEntry = {
   name: string;
   path: string;
@@ -174,6 +174,12 @@ async function readCodexConfig(): Promise<CodexConfigInfo> {
   };
 }
 
+async function readConfiguredModel() {
+  const config = await readCodexConfig();
+  const match = config.content.match(/^\s*model\s*=\s*"([^"\n]+)"/m);
+  return match?.[1] ?? null;
+}
+
 async function restartCodex() {
   await codex.restart();
   await listThreads();
@@ -204,13 +210,19 @@ async function switchWorkspace(workspacePath: string) {
 }
 
 async function listThreads() {
+  const configuredModel = await readConfiguredModel();
   const response = await codex.request<{ data: ThreadResponse["thread"][] }>("thread/list", {
     cwd: rootDir,
     limit: 50,
     sourceKinds: []
   });
 
-  return store.setSummaries(response.data as Thread[]);
+  return store.setSummaries(
+    response.data.map((thread) => ({
+      ...thread,
+      model: thread.model ?? configuredModel
+    })) as Thread[]
+  );
 }
 
 async function threadLoaded(threadId: string) {
@@ -219,6 +231,7 @@ async function threadLoaded(threadId: string) {
 }
 
 async function loadThread(threadId: string) {
+  const configuredModel = await readConfiguredModel();
   const loaded = await threadLoaded(threadId);
   let response: ThreadResponse;
 
@@ -274,12 +287,16 @@ async function loadThread(threadId: string) {
     }
   }
 
-  const detail = store.setThread(response.thread as Thread);
+  const detail = store.setThread({
+    ...response.thread,
+    model: response.thread.model ?? response.model ?? configuredModel
+  } as Thread);
   await switchWorkspace(detail.summary.cwd);
   return detail;
 }
 
 async function createThread(name?: string | null, workspacePath?: string | null) {
+  const configuredModel = await readConfiguredModel();
   const targetWorkspaceDir = resolveWorkspaceDir(workspacePath);
   await ensureWorkspaceDir(targetWorkspaceDir);
 
@@ -296,7 +313,10 @@ async function createThread(name?: string | null, workspacePath?: string | null)
     response.thread.name = name;
   }
 
-  const detail = store.setThread(response.thread as Thread);
+  const detail = store.setThread({
+    ...response.thread,
+    model: response.thread.model ?? response.model ?? configuredModel
+  } as Thread);
   await switchWorkspace(detail.summary.cwd);
   return detail;
 }

@@ -8,6 +8,7 @@ export type SessionSummary = {
   createdAt: number;
   status: ThreadStatusType;
   cwd: string;
+  model?: string | null;
 };
 
 export type UiMessageKind =

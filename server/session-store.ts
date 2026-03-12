@@ -32,6 +32,7 @@ export type Thread = {
   createdAt: number;
   updatedAt: number;
   cwd: string;
+  model?: string | null;
   status: { type: ThreadStatusType; activeFlags?: string[] };
   turns: Turn[];
 };
@@ -217,7 +218,8 @@ export class SessionStore {
       updatedAt: thread.updatedAt,
       createdAt: thread.createdAt,
       status: thread.status.type,
-      cwd: thread.cwd
+      cwd: thread.cwd,
+      model: thread.model ?? null
     };
 
     const detail: SessionDetail = {
@@ -258,7 +260,8 @@ export class SessionStore {
         updatedAt: thread.updatedAt,
         createdAt: thread.createdAt,
         status: thread.status.type,
-        cwd: thread.cwd
+        cwd: thread.cwd,
+        model: thread.model ?? null
       });
     }
 

@@ -710,6 +710,14 @@ pre {
   background: var(--panel-strong);
 }
 
+.session-head-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .eyebrow {
   font-size: 0.66rem;
   text-transform: uppercase;
