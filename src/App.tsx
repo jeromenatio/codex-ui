@@ -691,7 +691,7 @@ const ConversationPane = memo(function ConversationPane({
             ) : null}
           </label>
           {searchValue ? <span className="meta-tag">{t("label.search_matches", { count: matchedCount })}</span> : null}
-          <button type="button" className="ghost-button subtle" onClick={onExport}>
+          <button type="button" className="ghost-button subtle conversation-export-button" onClick={onExport}>
             <FileDown size={15} />
             {t("button.export")}
           </button>
