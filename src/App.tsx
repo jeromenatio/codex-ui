@@ -40,7 +40,7 @@ import {
   Trash2,
   UserRound
 } from "lucide-react";
-import type { AccountInfo, BootstrapResponse, CodexConfigInfo, SessionDetail, SessionSummary, Theme } from "./types";
+import type { AccountInfo, AvailableModel, BootstrapResponse, CodexConfigInfo, SessionDetail, SessionSummary, Theme } from "./types";
 
 const THEMES: Theme[] = [
   {
@@ -337,6 +337,7 @@ function App() {
   const [isConfigSaving, setIsConfigSaving] = useState(false);
   const [isSessionsOverlayOpen, setIsSessionsOverlayOpen] = useState(false);
   const [isQuickPromptsOpen, setIsQuickPromptsOpen] = useState(false);
+  const [isModelOverlayOpen, setIsModelOverlayOpen] = useState(false);
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [quickPrompts, setQuickPrompts] = useState<QuickPrompt[]>(() => loadQuickPrompts());
@@ -355,6 +356,9 @@ function App() {
   const [archiveTarget, setArchiveTarget] = useState<FileTreeEntry | null>(null);
   const [includeEnvInArchive, setIncludeEnvInArchive] = useState(false);
   const [isArchiveDownloading, setIsArchiveDownloading] = useState(false);
+  const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
+  const [isModelsLoading, setIsModelsLoading] = useState(false);
+  const [isModelSaving, setIsModelSaving] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pendingAutoScrollRef = useRef(false);
@@ -438,6 +442,18 @@ function App() {
     const data = await fetchJson<{ config: CodexConfigInfo }>("/api/config");
     setConfigDraft(data.config.content);
     setConfigPath(data.config.path);
+  }
+
+  async function loadAvailableModels() {
+    setIsModelsLoading(true);
+    try {
+      const data = await fetchJson<{ models: AvailableModel[] }>("/api/models");
+      setAvailableModels(data.models);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unable to load models.");
+    } finally {
+      setIsModelsLoading(false);
+    }
   }
 
   async function loadFolderTree(folderPath: string, options?: { markOpen?: boolean }) {
@@ -1136,6 +1152,42 @@ function App() {
     setIsConfigOpen(true);
   }
 
+  async function handleOpenModelOverlay() {
+    if (!currentThread) {
+      return;
+    }
+
+    setIsModelOverlayOpen(true);
+    if (!availableModels.length) {
+      await loadAvailableModels();
+    }
+  }
+
+  async function handleChangeSessionModel(model: string) {
+    if (!currentThread) {
+      return;
+    }
+
+    setIsModelSaving(true);
+    try {
+      const data = await fetchJson<{ thread: SessionDetail; sessions: SessionSummary[] }>(
+        `/api/sessions/${currentThread.summary.id}/model`,
+        {
+          method: "POST",
+          body: JSON.stringify({ model })
+        }
+      );
+      setCurrentThread(data.thread);
+      setSessions(data.sessions);
+      notifySuccess(`Session model changed to ${model}.`);
+      setIsModelOverlayOpen(false);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unable to change the session model.");
+    } finally {
+      setIsModelSaving(false);
+    }
+  }
+
   async function handleSaveConfig(restart: boolean) {
     setIsConfigSaving(true);
     try {
@@ -1376,7 +1428,16 @@ function App() {
                   <h2>Sessions</h2>
                 </div>
                 <div className="session-head-meta">
-                  {selectedSessionModel ? <span className="meta-tag">{selectedSessionModel}</span> : null}
+                  {selectedSessionModel ? (
+                    <button
+                      type="button"
+                      className="meta-tag meta-tag-button"
+                      onClick={() => void handleOpenModelOverlay()}
+                      disabled={!currentThread}
+                    >
+                      {selectedSessionModel}
+                    </button>
+                  ) : null}
                   <span className="meta-tag">{visibleConversationCount} msgs</span>
                 </div>
               </div>
@@ -1642,6 +1703,63 @@ function App() {
               </button>
             </article>
           ))}
+        </div>
+      ) : null}
+
+      {isModelOverlayOpen ? (
+        <div className="modal-backdrop" onClick={() => setIsModelOverlayOpen(false)}>
+          <section className="modal-card modal-card-wide" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <h3>Session model</h3>
+              <button
+                type="button"
+                className="ghost-button subtle icon-button"
+                onClick={() => setIsModelOverlayOpen(false)}
+                aria-label="Close model overlay"
+              >
+                <CircleX size={16} />
+              </button>
+            </div>
+
+            <p className="modal-copy">
+              Choose the model used for the current session. The selection will be reused for the next turns.
+            </p>
+
+            <div className="model-list">
+              {isModelsLoading ? (
+                <div className="empty-state compact-empty">
+                  <LoaderCircle size={18} className="spin" />
+                  <p>Loading models...</p>
+                </div>
+              ) : availableModels.length ? (
+                availableModels.map((entry) => {
+                  const isActive = entry.model === selectedSessionModel;
+                  return (
+                    <button
+                      key={entry.id}
+                      type="button"
+                      className={`model-option ${isActive ? "active" : ""}`}
+                      onClick={() => void handleChangeSessionModel(entry.model)}
+                      disabled={isModelSaving}
+                    >
+                      <div className="model-option-copy">
+                        <strong>{entry.displayName}</strong>
+                        <span>{entry.description}</span>
+                      </div>
+                      <div className="model-option-meta">
+                        {entry.isDefault ? <span className="meta-tag">Default</span> : null}
+                        <span className="meta-tag">{entry.model}</span>
+                      </div>
+                    </button>
+                  );
+                })
+              ) : (
+                <div className="empty-state compact-empty">
+                  <p>No models available.</p>
+                </div>
+              )}
+            </div>
+          </section>
         </div>
       ) : null}
 

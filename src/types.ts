@@ -56,6 +56,15 @@ export type CodexConfigInfo = {
   content: string;
 };
 
+export type AvailableModel = {
+  id: string;
+  model: string;
+  displayName: string;
+  description: string;
+  hidden: boolean;
+  isDefault: boolean;
+};
+
 export type Theme = {
   id: string;
   label: string;

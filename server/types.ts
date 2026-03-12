@@ -62,3 +62,12 @@ export type CodexConfigInfo = {
   path: string;
   content: string;
 };
+
+export type AvailableModel = {
+  id: string;
+  model: string;
+  displayName: string;
+  description: string;
+  hidden: boolean;
+  isDefault: boolean;
+};

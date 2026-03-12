@@ -8,13 +8,14 @@ import express from "express";
 import { fileURLToPath } from "node:url";
 import { CodexAppClient } from "./codex-app-client.js";
 import { SessionStore, mapItem, type Thread, type ThreadItem } from "./session-store.js";
-import type { AccountInfo, CodexConfigInfo, SessionDetail } from "./types.js";
+import type { AccountInfo, AvailableModel, CodexConfigInfo, SessionDetail } from "./types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "..");
 const clientDist = path.join(rootDir, "dist");
 const codexConfigPath = path.join(process.env.HOME ?? "/root", ".codex", "config.toml");
+const sessionModelsPath = path.join(process.env.HOME ?? "/root", ".codex", "codex-ui-session-models.json");
 const projectsRoot = "/projects";
 let activeWorkspaceDir = rootDir;
 
@@ -27,6 +28,10 @@ const store = new SessionStore();
 const sseClients = new Set<express.Response>();
 
 type ThreadResponse = { thread: Thread; model?: string };
+type ModelListResponse = {
+  data: AvailableModel[];
+  nextCursor?: string | null;
+};
 type FileTreeEntry = {
   name: string;
   path: string;
@@ -174,6 +179,38 @@ async function readCodexConfig(): Promise<CodexConfigInfo> {
   };
 }
 
+async function readSessionModelOverrides() {
+  try {
+    const content = await fs.readFile(sessionModelsPath, "utf8");
+    const parsed = JSON.parse(content) as Record<string, string>;
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[0] === "string" && typeof entry[1] === "string")
+    );
+  } catch {
+    return {} as Record<string, string>;
+  }
+}
+
+async function writeSessionModelOverrides(overrides: Record<string, string>) {
+  await fs.mkdir(path.dirname(sessionModelsPath), { recursive: true });
+  await fs.writeFile(sessionModelsPath, JSON.stringify(overrides, null, 2), "utf8");
+}
+
+async function setSessionModelOverride(threadId: string, model: string | null) {
+  const overrides = await readSessionModelOverrides();
+  if (model) {
+    overrides[threadId] = model;
+  } else {
+    delete overrides[threadId];
+  }
+  await writeSessionModelOverrides(overrides);
+}
+
+async function resolveSessionModel(threadId: string, fallbackModel: string | null) {
+  const overrides = await readSessionModelOverrides();
+  return overrides[threadId] ?? fallbackModel;
+}
+
 async function readConfiguredModel() {
   const config = await readCodexConfig();
   const match = config.content.match(/^\s*model\s*=\s*"([^"\n]+)"/m);
@@ -211,6 +248,7 @@ async function switchWorkspace(workspacePath: string) {
 
 async function listThreads() {
   const configuredModel = await readConfiguredModel();
+  const overrides = await readSessionModelOverrides();
   const response = await codex.request<{ data: ThreadResponse["thread"][] }>("thread/list", {
     cwd: rootDir,
     limit: 50,
@@ -220,9 +258,26 @@ async function listThreads() {
   return store.setSummaries(
     response.data.map((thread) => ({
       ...thread,
-      model: thread.model ?? configuredModel
+      model: overrides[thread.id] ?? thread.model ?? configuredModel
     })) as Thread[]
   );
+}
+
+async function listAvailableModels() {
+  const models: AvailableModel[] = [];
+  let cursor: string | null | undefined = null;
+
+  do {
+    const response: ModelListResponse = await codex.request<ModelListResponse>("model/list", {
+      cursor,
+      includeHidden: false,
+      limit: 100
+    });
+    models.push(...response.data);
+    cursor = response.nextCursor ?? null;
+  } while (cursor);
+
+  return models;
 }
 
 async function threadLoaded(threadId: string) {
@@ -289,7 +344,7 @@ async function loadThread(threadId: string) {
 
   const detail = store.setThread({
     ...response.thread,
-    model: response.thread.model ?? response.model ?? configuredModel
+    model: await resolveSessionModel(threadId, response.thread.model ?? response.model ?? configuredModel)
   } as Thread);
   await switchWorkspace(detail.summary.cwd);
   return detail;
@@ -608,6 +663,14 @@ app.get("/api/config", async (_request, response) => {
   response.json({ config: await readCodexConfig() });
 });
 
+app.get("/api/models", async (_request, response) => {
+  try {
+    response.json({ models: await listAvailableModels() });
+  } catch (error) {
+    response.status(500).json({ error: getErrorMessage(error) });
+  }
+});
+
 app.get("/api/files/tree", async (request, response) => {
   try {
     const targetPath = typeof request.query.path === "string" ? request.query.path : "";
@@ -706,6 +769,23 @@ app.get("/api/sessions/:threadId", async (request, response) => {
   response.json({ thread: detail });
 });
 
+app.post("/api/sessions/:threadId/model", async (request, response) => {
+  const threadId = request.params.threadId;
+  const model = typeof request.body?.model === "string" ? request.body.model.trim() : "";
+
+  if (!model) {
+    response.status(400).json({ error: "Model is required." });
+    return;
+  }
+
+  await setSessionModelOverride(threadId, model);
+  const detail = await loadThread(threadId);
+  await listThreads();
+  broadcast("sessions", store.getSummaries());
+  broadcast("thread", detail);
+  response.json({ thread: detail, sessions: store.getSummaries() });
+});
+
 app.post("/api/sessions", async (request, response) => {
   const name = typeof request.body?.name === "string" ? request.body.name.trim() : "";
   const cwd = typeof request.body?.cwd === "string" ? request.body.cwd.trim() : "";
@@ -732,7 +812,8 @@ app.post("/api/sessions/:threadId/messages", async (request, response) => {
 
   await codex.request("turn/start", {
     threadId,
-    input: [{ type: "text", text, text_elements: [] }]
+    input: [{ type: "text", text, text_elements: [] }],
+    model: existing?.summary.model ?? null
   });
 
   const current = detailFromStore(threadId);
@@ -799,6 +880,7 @@ app.post("/api/sessions/:threadId/stop", async (request, response) => {
 
 app.delete("/api/sessions/:threadId", async (request, response) => {
   const threadId = request.params.threadId;
+  await setSessionModelOverride(threadId, null);
 
   await codex.request("thread/archive", { threadId });
   store.removeThread(threadId);
