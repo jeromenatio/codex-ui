@@ -9,6 +9,7 @@ import {
   CircleStop,
   CircleX,
   Copy,
+  Download,
   Expand,
   File,
   FileCode2,
@@ -281,6 +282,9 @@ function App() {
   const [isFileTreeLoading, setIsFileTreeLoading] = useState(false);
   const [isFileContentLoading, setIsFileContentLoading] = useState(false);
   const [isFileContentCopied, setIsFileContentCopied] = useState(false);
+  const [archiveTarget, setArchiveTarget] = useState<FileTreeEntry | null>(null);
+  const [includeEnvInArchive, setIncludeEnvInArchive] = useState(false);
+  const [isArchiveDownloading, setIsArchiveDownloading] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pendingAutoScrollRef = useRef(false);
@@ -774,6 +778,52 @@ function App() {
     }
   }
 
+  async function handleDownloadArchive() {
+    if (!archiveTarget) {
+      return;
+    }
+
+    setIsArchiveDownloading(true);
+
+    try {
+      const response = await fetch("/api/files/archive", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          path: archiveTarget.path,
+          includeEnv: includeEnvInArchive
+        })
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: "Unable to create archive." }));
+        throw new Error(error.error ?? "Unable to create archive.");
+      }
+
+      const blob = await response.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      const fileName = `${archiveTarget.name}.zip`;
+
+      anchor.href = downloadUrl;
+      anchor.download = fileName;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+
+      setArchiveTarget(null);
+      setIncludeEnvInArchive(false);
+      setError(null);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unable to download archive.");
+    } finally {
+      setIsArchiveDownloading(false);
+    }
+  }
+
   function renderMarkdown(text: string) {
     return (
       <ReactMarkdown
@@ -845,26 +895,43 @@ function App() {
 
       return (
         <div key={entry.path} className="file-tree-node">
-          <button
-            type="button"
-            className={`file-tree-row ${isSelected ? "active" : ""}`}
-            style={{ paddingLeft: `${12 + level * 18}px` }}
-            onClick={() => {
-              if (isDirectory) {
-                void handleFolderToggle(entry.path);
-                return;
-              }
+          <div className={`file-tree-row ${isSelected ? "active" : ""}`} style={{ paddingLeft: `${12 + level * 18}px` }}>
+            <button
+              type="button"
+              className="file-tree-main"
+              onClick={() => {
+                if (isDirectory) {
+                  void handleFolderToggle(entry.path);
+                  return;
+                }
 
-              void loadFileContent(entry.path);
-            }}
-          >
-            <span className="file-tree-caret">
-              {isDirectory ? (isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : null}
-            </span>
-            <span className="file-tree-icon">{fileEntryIcon(entry, isOpen)}</span>
-            <span className="file-tree-label">{entry.name}</span>
+                void loadFileContent(entry.path);
+              }}
+            >
+              <span className="file-tree-caret">
+                {isDirectory ? (isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : null}
+              </span>
+              <span className="file-tree-icon">{fileEntryIcon(entry, isOpen)}</span>
+              <span className="file-tree-label">{entry.name}</span>
+            </button>
+
+            {isDirectory ? (
+              <button
+                type="button"
+                className="file-tree-action"
+                onClick={() => {
+                  setArchiveTarget(entry);
+                  setIncludeEnvInArchive(false);
+                }}
+                aria-label={`Download ${entry.name} as zip`}
+                title="Download zip"
+              >
+                <Download size={14} />
+              </button>
+            ) : null}
+
             {isLoading ? <LoaderCircle size={14} className="spin" /> : null}
-          </button>
+          </div>
 
           {isDirectory && isOpen ? <div className="file-tree-children">{renderFileTree(entry.path, level + 1)}</div> : null}
         </div>
@@ -1305,6 +1372,57 @@ function App() {
           </aside>
         </main>
       )}
+
+      {archiveTarget ? (
+        <div className="modal-backdrop" onClick={() => setArchiveTarget(null)}>
+          <section className="modal-card" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <h3>Download folder as zip</h3>
+              <button
+                type="button"
+                className="ghost-button subtle icon-button"
+                onClick={() => setArchiveTarget(null)}
+                aria-label="Close archive modal"
+              >
+                <CircleX size={16} />
+              </button>
+            </div>
+
+            <p className="modal-copy">
+              Download <strong>{archiveTarget.name}</strong> as a zip archive. `node_modules` is always excluded.
+            </p>
+
+            <label className="archive-checkbox">
+              <input
+                type="checkbox"
+                checked={includeEnvInArchive}
+                onChange={(event) => setIncludeEnvInArchive(event.target.checked)}
+              />
+              <span>Include `.env` files in the zip</span>
+            </label>
+
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="ghost-button subtle"
+                onClick={() => setArchiveTarget(null)}
+                disabled={isArchiveDownloading}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="solid-button"
+                onClick={() => void handleDownloadArchive()}
+                disabled={isArchiveDownloading}
+              >
+                <Download size={16} />
+                {isArchiveDownloading ? "Preparing..." : "Download zip"}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {isCreateModalOpen ? (
         <div className="modal-backdrop" onClick={() => setIsCreateModalOpen(false)}>

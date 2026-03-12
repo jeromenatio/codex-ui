@@ -1,4 +1,5 @@
 import path from "node:path";
+import os from "node:os";
 import process from "node:process";
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
@@ -117,6 +118,51 @@ async function readProjectFile(input?: string | null) {
     name: path.basename(absolutePath),
     extension: path.extname(absolutePath).slice(1).toLowerCase() || null,
     content: content.toString("utf8")
+  };
+}
+
+async function createProjectArchive(input?: string | null, includeEnv = false) {
+  const absolutePath = resolveProjectsPath(input);
+  const stats = await fs.stat(absolutePath);
+  if (!stats.isDirectory()) {
+    throw new Error("Requested path is not a directory.");
+  }
+
+  const folderName = path.basename(absolutePath);
+  const parentDir = path.dirname(absolutePath);
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-ui-archive-"));
+  const archivePath = path.join(tempDir, `${folderName}.zip`);
+  const script = `
+import os
+import sys
+import zipfile
+
+root_dir = sys.argv[1]
+folder_name = sys.argv[2]
+archive_path = sys.argv[3]
+include_env = sys.argv[4] == "1"
+target_root = os.path.join(root_dir, folder_name)
+
+with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    for current_root, dirs, files in os.walk(target_root):
+        dirs[:] = [directory for directory in dirs if directory != "node_modules"]
+        for file_name in files:
+            if not include_env and file_name == ".env":
+                continue
+            absolute_file = os.path.join(current_root, file_name)
+            relative_file = os.path.relpath(absolute_file, root_dir)
+            archive.write(absolute_file, relative_file)
+`;
+
+  await execFileAsync("python3", ["-c", script, parentDir, folderName, archivePath, includeEnv ? "1" : "0"], {
+    cwd: parentDir,
+    env: process.env
+  });
+
+  return {
+    archivePath,
+    archiveName: `${folderName}.zip`,
+    tempDir
   };
 }
 
@@ -555,6 +601,39 @@ app.get("/api/files/content", async (request, response) => {
   try {
     const targetPath = typeof request.query.path === "string" ? request.query.path : "";
     response.json(await readProjectFile(targetPath));
+  } catch (error) {
+    response.status(400).json({ error: getErrorMessage(error) });
+  }
+});
+
+app.post("/api/files/archive", async (request, response) => {
+  try {
+    const targetPath = typeof request.body?.path === "string" ? request.body.path : "";
+    const includeEnv = Boolean(request.body?.includeEnv);
+    const { archivePath, archiveName, tempDir } = await createProjectArchive(targetPath, includeEnv);
+    let cleanedUp = false;
+
+    const cleanup = async () => {
+      if (cleanedUp) {
+        return;
+      }
+
+      cleanedUp = true;
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {
+        return;
+      });
+    };
+
+    response.download(archivePath, archiveName, async (error) => {
+      await cleanup();
+      if (error && !response.headersSent) {
+        response.status(500).json({ error: "Unable to download archive." });
+      }
+    });
+
+    response.on("close", () => {
+      void cleanup();
+    });
   } catch (error) {
     response.status(400).json({ error: getErrorMessage(error) });
   }

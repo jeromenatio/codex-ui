@@ -484,6 +484,18 @@ pre {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
+.file-tree-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
 .file-tree-caret {
   display: inline-flex;
   align-items: center;
@@ -504,6 +516,19 @@ pre {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.file-tree-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel-strong);
+  color: var(--muted);
 }
 
 .file-viewer-panel {
@@ -1078,6 +1103,26 @@ pre {
   color: var(--muted);
   font-size: 0.82rem;
   line-height: 1.4;
+}
+
+.archive-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+}
+
+.archive-checkbox input {
+  margin: 0;
+}
+
+.archive-checkbox span {
+  font-size: 0.82rem;
+  color: var(--text);
 }
 
 .config-toolbar {
