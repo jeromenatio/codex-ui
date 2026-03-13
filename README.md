@@ -87,6 +87,13 @@ En production :
 npm start
 ```
 
+En service systemd Ubuntu :
+
+```bash
+sudo ./scripts/install-systemd-service.sh
+systemctl status codex-ui
+```
+
 Par défaut, l'application compilée écoute sur `http://127.0.0.1:4180`.
 
 `npm start` rebuild automatiquement le frontend et le backend avant de lancer le serveur.
@@ -116,6 +123,31 @@ Diagnostic rapide de l'environnement :
 
 ```bash
 npm run doctor
+```
+
+## Ubuntu Service
+
+Installation du service :
+
+```bash
+sudo ./scripts/install-systemd-service.sh
+```
+
+Le service :
+
+- s'appelle `codex-ui`
+- tourne en utilisateur `root`
+- build l'application avant démarrage
+- redémarre automatiquement en cas de crash
+- redémarre automatiquement au boot
+
+Commandes utiles :
+
+```bash
+systemctl status codex-ui
+journalctl -u codex-ui -f
+sudo systemctl restart codex-ui
+sudo systemctl stop codex-ui
 ```
 
 ## UI Smoke Tests
