@@ -70,6 +70,7 @@ codex login status
 git clone https://github.com/jeromenatio/codex-ui.git
 cd codex-ui
 npm install
+npm run doctor
 ```
 
 6. Lance l'interface :
@@ -83,11 +84,12 @@ npm run dev
 En production :
 
 ```bash
-npm run build
 npm start
 ```
 
 Par défaut, l'application compilée écoute sur `http://127.0.0.1:4180`.
+
+`npm start` rebuild automatiquement le frontend et le backend avant de lancer le serveur.
 
 Pour choisir un autre port :
 
@@ -107,6 +109,14 @@ URLs par defaut en dev :
 
 - UI Vite : `http://127.0.0.1:5173`
 - API Express : `http://127.0.0.1:4180`
+
+Le proxy Vite redirige `/api` et `/events` vers `127.0.0.1:4180`.
+
+Diagnostic rapide de l'environnement :
+
+```bash
+npm run doctor
+```
 
 ## UI Smoke Tests
 
@@ -133,6 +143,7 @@ npm run test:e2e:headed
 Le setup :
 
 - démarre automatiquement l'app sur `http://127.0.0.1:4180`
+- rebuild automatiquement via `npm start` si besoin
 - réutilise un serveur déjà lancé sur ce port si présent
 - couvre les flows critiques : chat, diagnostics, files, archive zip, export, langue, configs, changement de modèle, images, clear composer, quick prompts, retry, stop, création et suppression de session
 
@@ -170,3 +181,4 @@ Quand tu lances ce projet, le serveur Node de ce dépôt sert l'interface web et
 
 - Si `codex` n'est pas installe ou n'est pas connecte, l'UI ne pourra pas charger les sessions.
 - Le premier demarrage peut prendre un peu plus de temps car le backend doit lancer `codex app-server`.
+- Un exemple de variables locales est disponible dans `.env.example`.

@@ -9,8 +9,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": "http://127.0.0.1:3001",
-      "/events": "http://127.0.0.1:3001"
+      "/api": "http://127.0.0.1:4180",
+      "/events": "http://127.0.0.1:4180"
     }
   }
 });

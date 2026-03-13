@@ -14,6 +14,15 @@ type CrashState = {
   stack?: string;
 };
 
+function isRecoverableNetworkError(error: Error) {
+  return (
+    error.name === "AbortError" ||
+    /Failed to fetch/i.test(error.message) ||
+    /NetworkError/i.test(error.message) ||
+    /Load failed/i.test(error.message)
+  );
+}
+
 class AppErrorBoundary extends React.Component<
   React.PropsWithChildren,
   { error: CrashState | null }
@@ -74,6 +83,12 @@ window.addEventListener("error", (event) => {
 window.addEventListener("unhandledrejection", (event) => {
   const reason = event.reason instanceof Error ? event.reason : new Error(String(event.reason));
   console.error("Codex UI unhandled rejection:", reason);
+
+  if (isRecoverableNetworkError(reason)) {
+    event.preventDefault();
+    return;
+  }
+
   renderGlobalCrash(reason.message, reason.stack);
 });
 
