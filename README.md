@@ -90,6 +90,7 @@ npm start
 En service systemd Ubuntu :
 
 ```bash
+chmod +x ./scripts/install-systemd-service.sh
 sudo ./scripts/install-systemd-service.sh
 systemctl status codex-ui
 ```
@@ -130,6 +131,7 @@ npm run doctor
 Installation du service :
 
 ```bash
+chmod +x ./scripts/install-systemd-service.sh
 sudo ./scripts/install-systemd-service.sh
 ```
 
@@ -140,6 +142,7 @@ Le service :
 - build l'application avant démarrage
 - redémarre automatiquement en cas de crash
 - redémarre automatiquement au boot
+- a été validé sur Ubuntu avec `systemctl status codex-ui` et écoute sur `127.0.0.1:4180`
 
 Commandes utiles :
 
