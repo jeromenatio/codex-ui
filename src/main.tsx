@@ -86,6 +86,13 @@ window.addEventListener("unhandledrejection", (event) => {
 
   if (isRecoverableNetworkError(reason)) {
     event.preventDefault();
+    window.dispatchEvent(
+      new CustomEvent("codex-ui:network-error", {
+        detail: {
+          message: reason.message
+        }
+      })
+    );
     return;
   }
 

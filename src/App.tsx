@@ -1454,6 +1454,16 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const handleNetworkError = (event: Event) => {
+      const detail = (event as CustomEvent<{ message?: string }>).detail;
+      notifyWarning(detail?.message || t("notify.backend_unreachable"));
+    };
+
+    window.addEventListener("codex-ui:network-error", handleNetworkError as EventListener);
+    return () => window.removeEventListener("codex-ui:network-error", handleNetworkError as EventListener);
+  }, [notifyWarning, t]);
+
+  useEffect(() => {
     return () => {
       if (scrollTimerRef.current !== null) {
         window.clearTimeout(scrollTimerRef.current);

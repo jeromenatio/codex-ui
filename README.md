@@ -128,6 +128,12 @@ Installation du navigateur Chromium :
 npm run test:e2e:install
 ```
 
+Selon la machine, Playwright peut aussi nécessiter ses dépendances système :
+
+```bash
+npx playwright install-deps chromium
+```
+
 Exécution des smoke tests UI :
 
 ```bash
