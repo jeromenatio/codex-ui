@@ -172,6 +172,95 @@ type QuickPrompt = {
   content: string;
 };
 
+function isOptimisticUserMessage(message: SessionDetail["messages"][number]) {
+  return message.role === "user" && message.id.startsWith("optimistic-");
+}
+
+function isPendingUserMessage(message: SessionDetail["messages"][number]) {
+  return message.role === "user" && message.id.startsWith("pending-user-");
+}
+
+function isSyntheticUserMessage(message: SessionDetail["messages"][number]) {
+  return isOptimisticUserMessage(message) || isPendingUserMessage(message);
+}
+
+function attachmentSignature(attachments: MessageAttachment[] | undefined) {
+  return (attachments ?? [])
+    .map((attachment) => `${attachment.kind}:${attachment.name}:${attachment.path}`)
+    .sort()
+    .join("|");
+}
+
+function conversationMessageSignature(message: SessionDetail["messages"][number]) {
+  return `${message.role}|${message.text.trim()}|${attachmentSignature(message.attachments)}`;
+}
+
+function messagePriority(message: SessionDetail["messages"][number]) {
+  if (isOptimisticUserMessage(message)) {
+    return 1;
+  }
+
+  if (isPendingUserMessage(message)) {
+    return 2;
+  }
+
+  return 3;
+}
+
+function dedupeConversationMessages(messages: SessionDetail["messages"]) {
+  const next: SessionDetail["messages"] = [];
+
+  for (const message of messages) {
+    const existingIndex = next.findIndex(
+      (entry) =>
+        entry.role === message.role &&
+        conversationMessageSignature(entry) === conversationMessageSignature(message) &&
+        (isSyntheticUserMessage(entry) || isSyntheticUserMessage(message))
+    );
+
+    if (existingIndex === -1) {
+      next.push(message);
+      continue;
+    }
+
+    if (messagePriority(message) >= messagePriority(next[existingIndex])) {
+      next[existingIndex] = message;
+    }
+  }
+
+  return next;
+}
+
+function mergeIncomingThread(previous: SessionDetail | null, incoming: SessionDetail) {
+  if (!previous || previous.summary.id !== incoming.summary.id) {
+    return incoming;
+  }
+
+  const optimisticMessages = previous.messages.filter(isOptimisticUserMessage);
+  if (!optimisticMessages.length) {
+    return incoming;
+  }
+
+  const knownSignatures = new Set(
+    incoming.messages
+      .filter((message) => message.role === "user")
+      .map((message) => conversationMessageSignature(message))
+  );
+
+  const missingOptimisticMessages = optimisticMessages.filter(
+    (message) => !knownSignatures.has(conversationMessageSignature(message))
+  );
+
+  if (!missingOptimisticMessages.length) {
+    return incoming;
+  }
+
+  return {
+    ...incoming,
+    messages: dedupeConversationMessages([...incoming.messages, ...missingOptimisticMessages])
+  };
+}
+
 function notificationIcon(kind: NotificationKind) {
   switch (kind) {
     case "error":
@@ -842,9 +931,11 @@ function App() {
   const isBusy = currentThread?.liveStatus.tone === "running";
   const conversationMessages = useMemo(
     () =>
-      currentThread?.messages.filter(
-        (entry) => entry.role === "user" || (entry.role === "assistant" && entry.phase !== "commentary")
-      ) ?? [],
+      dedupeConversationMessages(
+        currentThread?.messages.filter(
+          (entry) => entry.role === "user" || (entry.role === "assistant" && entry.phase !== "commentary")
+        ) ?? []
+      ),
     [currentThread?.messages]
   );
   const filteredConversationMessages = useMemo(() => {
@@ -1351,7 +1442,7 @@ function App() {
           return previous;
         }
 
-        return payload;
+        return mergeIncomingThread(previous, payload);
       });
     });
 
@@ -1541,7 +1632,11 @@ function App() {
         setPendingAttachments(nextAttachments as PendingAttachment[]);
       }
       setError(nextError instanceof Error ? nextError.message : t("error.send_message"));
-      await loadThread(currentThread.summary.id, { preserveError: true });
+      try {
+        await loadThread(currentThread.summary.id, { preserveError: true });
+      } catch {
+        // Keep the original send error visible without crashing the whole app on a failed recovery fetch.
+      }
     } finally {
       setIsPosting(false);
     }

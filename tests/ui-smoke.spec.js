@@ -490,6 +490,55 @@ test("new session creation selects the new session", async ({ page, request }) =
   }
 });
 
+test("new session can send its first message immediately", async ({ page, request }) => {
+  test.setTimeout(120_000);
+
+  const tempName = uniqueName("first-message-e2e");
+  const tempPath = `/projects/${tempName}`;
+  const prompt = `Reply with the exact token ${tempName.toUpperCase()} and nothing else.`;
+
+  let created = null;
+
+  try {
+    await openChat(page);
+    await page.getByLabel("Create a new session").click();
+    await expect(page.getByRole("heading", { name: "New session" })).toBeVisible();
+    await page.getByPlaceholder("/projects/my-workspace").fill(tempPath);
+    await page.getByPlaceholder("Session title").fill(tempName);
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+
+    await expect
+      .poll(async () => {
+        const sessions = await fetchSessions(request);
+        return sessions.find((entry) => entry.name === tempName)?.id ?? null;
+      }, { timeout: 20_000 })
+      .not.toBeNull();
+
+    const sessions = await fetchSessions(request);
+    created = sessions.find((entry) => entry.name === tempName) ?? null;
+    expect(created).toBeTruthy();
+
+    const composer = page.getByPlaceholder("Post a message to the active Codex session...");
+    await composer.fill(prompt);
+    await page.getByRole("button", { name: "Send" }).click();
+
+    await expect(page.locator(".message-card.message-user").filter({ hasText: prompt }).first()).toBeVisible({
+      timeout: 15_000
+    });
+
+    await waitForAssistantText(request, created.id, tempName.toUpperCase(), 90_000);
+    await expect(
+      page.locator(".message-card.message-assistant").filter({ hasText: tempName.toUpperCase() }).first()
+    ).toBeVisible({ timeout: 90_000 });
+  } finally {
+    if (created?.id) {
+      await waitForThreadIdle(request, created.id).catch(() => null);
+      await deleteSession(request, created.id);
+    }
+    await fs.rm(tempPath, { recursive: true, force: true });
+  }
+});
+
 test("sessions overlay deletes a temporary session through the UI", async ({ page, request }) => {
   const tempName = uniqueName("delete-e2e");
   const tempPath = `/projects/${tempName}`;
