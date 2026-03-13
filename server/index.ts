@@ -1158,7 +1158,7 @@ app.get("/{*path}", (_request, response) => {
   response.sendFile(path.join(clientDist, "index.html"));
 });
 
-const port = Number(process.env.PORT ?? 3001);
+const port = Number(process.env.PORT ?? 4180);
 
 async function start() {
   await fs.mkdir(projectsRoot, { recursive: true }).catch(() => {

@@ -87,12 +87,12 @@ npm run build
 npm start
 ```
 
-Par défaut, l'application compilée écoute sur `http://127.0.0.1:3001`.
+Par défaut, l'application compilée écoute sur `http://127.0.0.1:4180`.
 
 Pour choisir un autre port :
 
 ```bash
-PORT=4180 npm start
+PORT=4300 npm start
 ```
 
 ## Development
@@ -106,7 +106,7 @@ npm run dev
 URLs par defaut en dev :
 
 - UI Vite : `http://127.0.0.1:5173`
-- API Express : `http://127.0.0.1:3001`
+- API Express : `http://127.0.0.1:4180`
 
 ## UI Smoke Tests
 
